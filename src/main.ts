@@ -3,6 +3,8 @@ import {
   Text, TextStyle, FederatedPointerEvent,
 } from "pixi.js";
 import { GameStateMachine, GameState } from "./core/GameStateMachine";
+import { getNearMissHint } from "./game/CardEvaluator";
+import { CARDS } from "./config/cards";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
 import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
@@ -75,8 +77,9 @@ const END_PROFIT_NEG   = new TextStyle({ fontFamily: "monospace", fontSize: 16, 
 const END_BTN_STYLE    = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
 
 // Lock button text styles (pre-allocated, reused in updateLockOverlay)
-const LOCK_BTN_OFF_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0x6666aa });
-const LOCK_BTN_ON_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xffaa00, fontWeight: "bold" });
+const LOCK_BTN_OFF_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0x6666aa });
+const LOCK_BTN_ON_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xffaa00, fontWeight: "bold" });
+const NEAR_MISS_LBL_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xff8800, fontWeight: "bold" });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VIEW
@@ -89,19 +92,23 @@ const LOCK_BTN_ON_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 10
 //   centerHit   — invisible hit-zone inside container for lock-toggle on click
 // ─────────────────────────────────────────────────────────────────────────────
 interface ReelView extends ReelViewRef {
-  slot:         Container;
-  container:    Container;
-  aboveText:    Text;
-  centerText:   Text;
-  belowText:    Text;
-  lockOverlay:  Graphics;
-  lockLabel:    Text;        // kept for interface compat, always hidden
-  nudgeUp:      Container;
-  nudgeDown:    Container;
-  lockBtn:      Container;
-  lockBtnBg:    Graphics;
-  lockBtnLabel: Text;
-  centerHit:    Container;
+  slot:           Container;
+  container:      Container;
+  aboveText:      Text;
+  centerText:     Text;
+  belowText:      Text;
+  lockOverlay:    Graphics;
+  lockLabel:      Text;        // kept for interface compat, always hidden
+  nudgeUp:        Container;
+  nudgeDown:      Container;
+  lockBtn:        Container;
+  lockBtnBg:      Graphics;
+  lockBtnLabel:   Text;
+  centerHit:      Container;
+  /** Amber glow ring shown during near-miss animation (alpha starts at 0). */
+  nearMissGlow:   Graphics;
+  /** "NEED X" / "ALMOST" label shown during near-miss animation (alpha=0). */
+  nearMissLabel:  Text;
 }
 
 function createReelView(): ReelView {
@@ -214,6 +221,26 @@ function createReelView(): ReelView {
   lockBtn.on("pointerout",  () => { lockBtnBg.tint = 0xffffff; });
   slot.addChild(lockBtn);
 
+  // ── Near-miss overlay (amber glow ring + label) ─────────────────────────────
+  // Both are non-interactive and start invisible; animated by showNearMiss().
+  const nearMissGlow = new Graphics();
+  // A ring slightly outside the reel box edges for a "halo" effect.
+  nearMissGlow.roundRect(-3, -3, REEL_WIDTH + 6, REEL_HEIGHT + 6, 8);
+  nearMissGlow.stroke({ color: 0xff8800, width: 4 });
+  nearMissGlow.roundRect(0, 0, REEL_WIDTH, REEL_HEIGHT, 6);
+  nearMissGlow.fill({ color: 0xff8800, alpha: 0.10 });
+  nearMissGlow.alpha     = 0;
+  nearMissGlow.eventMode = "none";
+  container.addChild(nearMissGlow);
+
+  const nearMissLabel = new Text({ text: "", style: NEAR_MISS_LBL_STYLE });
+  nearMissLabel.anchor.set(0.5, 0);
+  nearMissLabel.x        = CX;
+  nearMissLabel.y        = 6;  // inside reel box, above the "above" digit
+  nearMissLabel.alpha    = 0;
+  nearMissLabel.eventMode = "none";
+  container.addChild(nearMissLabel);
+
   return {
     slot, container,
     aboveText, centerText, belowText,
@@ -221,6 +248,7 @@ function createReelView(): ReelView {
     nudgeUp, nudgeDown,
     lockBtn, lockBtnBg, lockBtnLabel,
     centerHit,
+    nearMissGlow, nearMissLabel,
   };
 }
 
@@ -358,6 +386,70 @@ async function main() {
     rv.centerHit.on("pointerdown", (e: FederatedPointerEvent) => { e.stopPropagation(); doToggleLock(idx); });
   }
 
+  // ── Near-miss reel animation ───────────────────────────────────────────────
+  let _nmCancelFn: (() => void) | null = null;
+
+  function showNearMiss(
+    reelIndices: number[],
+    wanted?: number,
+    durationMs = 1400,
+  ): void {
+    // Cancel any running animation first.
+    if (_nmCancelFn) { _nmCancelFn(); _nmCancelFn = null; }
+    // Reset all reels to invisible.
+    for (const rv of reelViews) {
+      rv.nearMissGlow.alpha  = 0;
+      rv.nearMissLabel.alpha = 0;
+    }
+    if (reelIndices.length === 0) return;
+
+    const FADE_IN  = 150;
+    const FADE_OUT = 400;
+    const label    = wanted !== undefined ? `NEED ${wanted}` : "ALMOST";
+    for (const idx of reelIndices) {
+      const rv = reelViews[idx];
+      if (rv) rv.nearMissLabel.text = label;
+    }
+
+    const startTs = performance.now();
+    const tick = (): void => {
+      const elapsed = performance.now() - startTs;
+      const hold    = Math.max(0, durationMs - FADE_IN - FADE_OUT);
+      let   alpha: number;
+
+      if (elapsed < FADE_IN) {
+        alpha = elapsed / FADE_IN;
+      } else if (elapsed < FADE_IN + hold) {
+        alpha = 1;
+      } else if (elapsed < durationMs) {
+        alpha = 1 - (elapsed - FADE_IN - hold) / FADE_OUT;
+      } else {
+        // Animation complete — clean up.
+        for (const idx of reelIndices) {
+          const rv = reelViews[idx];
+          if (rv) { rv.nearMissGlow.alpha = 0; rv.nearMissLabel.alpha = 0; }
+        }
+        app.ticker.remove(tick);
+        _nmCancelFn = null;
+        return;
+      }
+
+      for (const idx of reelIndices) {
+        const rv = reelViews[idx];
+        if (rv) { rv.nearMissGlow.alpha = alpha; rv.nearMissLabel.alpha = alpha; }
+      }
+    };
+
+    _nmCancelFn = () => {
+      app.ticker.remove(tick);
+      for (const idx of reelIndices) {
+        const rv = reelViews[idx];
+        if (rv) { rv.nearMissGlow.alpha = 0; rv.nearMissLabel.alpha = 0; }
+      }
+    };
+    app.ticker.add(tick);
+  }
+
   // ── RunPanel + BetPanel ────────────────────────────────────────────────────
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
@@ -386,6 +478,17 @@ async function main() {
         toast.show("CHOOSE ONE OR SPIN ANYWAY", { duration: 60_000 });
       } else if (cards.almostShownIds.size > 0) {
         toast.show("SO CLOSE...", { duration: 60_000 });
+
+        // Near-miss reel highlight — pick the best almost card and get a hint.
+        const almostCards = CARDS.filter(c => cards.almostShownIds.has(c.id));
+        almostCards.sort((a, b) =>
+          b.payoutMult - a.payoutMult || b.tier - a.tier || a.id.localeCompare(b.id),
+        );
+        const best = almostCards[0];
+        if (best) {
+          const hint = getNearMissHint(best, digits);
+          if (hint) showNearMiss(hint.reels, hint.wanted);
+        }
       }
 
       if (run.actions === 0) fsm.transition("ended");
@@ -543,6 +646,9 @@ async function main() {
     const s = fsm.state;
     if (s === "running" || s === "resolve" || s === "betting") return;
     if (!cards.canClaim(cardId)) return;
+
+    // Stop any near-miss glow immediately — the spin state has changed.
+    if (_nmCancelFn) { _nmCancelFn(); _nmCancelFn = null; }
 
     const { payoutMult, tier } = cards.claimOne(cardId);
     economy.addWin(payoutMult);
