@@ -10,8 +10,6 @@ import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
 import { CardController } from "./game/CardController";
 import { EconomyController } from "./game/EconomyController";
-import { evaluateCard } from "./game/CardEvaluator";
-import { CARDS } from "./config/cards";
 import { DevDrawer } from "./ui/DevDrawer";
 import { RunPanel } from "./ui/RunPanel";
 import { CardGrid } from "./ui/CardGrid";
@@ -364,37 +362,21 @@ async function main() {
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
 
-  // UI-only set of cards that are one digit away from matching.
-  // Purely visual — never affects payouts, RNG, or simulation.
-  const almostIds = new Set<string>();
-
-  function recomputeAlmostIds(digits: number[]): void {
-    almostIds.clear();
-    for (const card of CARDS) {
-      if (cards.claimedIds.has(card.id))   continue; // already claimed
-      if (cards.availableIds.has(card.id)) continue; // already green (distance=0)
-      const { distance } = evaluateCard(card, digits);
-      if (distance === 1) almostIds.add(card.id);
-    }
-  }
-
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
 
     // Player is spinning with available (green) cards still on screen — skip them.
     if (cards.hasAvailable()) {
-      cards.clearAvailable();      // no payout, no claim
-      almostIds.clear();           // stale almost-cards are also gone
-      refreshAllCards();           // clear green/yellow highlights immediately
+      cards.clearAvailable();  // clears available + both almost sets
+      refreshAllCards();       // clear green/yellow highlights immediately
       toast.show("SKIPPED", { duration: 800 });
     }
 
     spinController.requestSpin(() => {
-      // Evaluate ALL unclaimed cards against the new digits.
+      // onSpinResolved evaluates ready cards AND recomputes almostShownIds.
       const digits = model.getVisibleCenterDigits();
       cards.onSpinResolved(digits);
-      recomputeAlmostIds(digits);  // compute "almost" for yellow highlights
 
       refreshAllReels();
       devDrawer.devPanel.refreshInfo();
@@ -402,7 +384,7 @@ async function main() {
 
       if (cards.hasAvailable()) {
         toast.show("CHOOSE ONE OR SPIN ANYWAY", { duration: 60_000 });
-      } else if (almostIds.size > 0) {
+      } else if (cards.almostShownIds.size > 0) {
         toast.show("SO CLOSE...", { duration: 60_000 });
       }
 
@@ -521,8 +503,7 @@ async function main() {
     run.configure(economy.anteEnabled);
     run.resetRun();
     economy.resetRun();
-    cards.resetRun();
-    almostIds.clear();
+    cards.resetRun(); // also clears almostShownIds
     model.resetOffsets();
     model.resetLocks();
     spinController.reset();
@@ -547,7 +528,7 @@ async function main() {
 
   /** Centralised card-grid refresh. Passes current available/claimed/almost sets. */
   function refreshAllCards(): void {
-    cardGrid.updateCards(cards.availableIds, cards.claimedIds, almostIds);
+    cardGrid.updateCards(cards.availableIds, cards.claimedIds, cards.almostShownIds);
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     runPanel.refresh(economy.totalWin, cards.claimedIds.size);
   }
@@ -580,11 +561,8 @@ async function main() {
     model.resetLocks();
     for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
 
-    if (almostIds.size > 0) {
-      toast.show("LOCKS CLEARED  •  SO CLOSE  •  SPIN TO CONTINUE", { duration: 1400 });
-    } else {
-      toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
-    }
+    // almostShownIds is already cleared by claimOne(); check before refresh.
+    toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
 
     devDrawer.devPanel.refreshInfo();
     syncReelControls(fsm.state);
