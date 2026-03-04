@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sim": "tsx scripts/simulate.ts"
   },
   "dependencies": {
     "pixi.js": "^8.6.6"
   },
   "devDependencies": {
     "playwright": "^1.58.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.0"
   }
