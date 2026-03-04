@@ -18,8 +18,9 @@
 import { CARDS } from "../config/cards";
 import { CardDef } from "../types/CardTypes";
 import { isCardSatisfied } from "../game/CardEvaluator";
+import { RNG } from "../core/RNG";
 
-export type Policy = "baseline" | "smart";
+export type Policy = "baseline" | "smart" | "random";
 
 // ── Shared tape-navigation helpers ────────────────────────────────────────────
 
@@ -46,9 +47,9 @@ export function computeDigits(
 // ── Card selection ────────────────────────────────────────────────────────────
 
 /**
- * Choose the single best card to claim from `available`.
+ * Baseline/smart: choose the single best card to claim from `available`.
  *
- * Priority order (deterministic tie-breaking):
+ * Priority order (fully deterministic tie-breaking):
  *   1. Highest payoutMult
  *   2. Highest tier
  *   3. Lexicographically smallest id (stable across runs)
@@ -59,6 +60,20 @@ export function chooseCard(available: CardDef[]): CardDef {
     if (b.tier       !== a.tier)       return b.tier       - a.tier;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   })[0];
+}
+
+/**
+ * Random policy: choose a card uniformly at random using the run's decision RNG.
+ *
+ * The decision RNG is seeded as `new RNG(runSeed ^ 0x9E3779B9)` so it is
+ * completely independent of the spin-outcome RNG stream.  Cards are sorted
+ * deterministically first (by id) so the same RNG state always maps to the
+ * same card regardless of Set or Map iteration order.
+ */
+export function chooseCardRandom(available: CardDef[], rng: RNG): CardDef {
+  // Sort by id for a stable, reproducible ordering before drawing.
+  const sorted = available.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return sorted[rng.nextInt(0, sorted.length - 1)];
 }
 
 // ── Smart-nudge search ────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ import {
   wrap,
   computeDigits,
   chooseCard,
+  chooseCardRandom,
   findBestNudge,
 } from "./BotStrategy";
 
@@ -222,6 +223,12 @@ export function runSimulation(
     claimedIds.clear();
     run.resetRun();
 
+    // Decision RNG — seeded independently from spin RNGs so that choosing
+    // a random card never perturbs the spin-outcome sequence.
+    // XOR constant 0x9E3779B9 (golden-ratio fractional part) provides a
+    // well-mixed seed that is deterministic and unique per run.
+    const decisionRng = policy === "random" ? new RNG(seed ^ 0x9E3779B9) : null;
+
     let spinCount       = 0;
     let runWin          = 0;
     let runSpins        = 0;
@@ -239,6 +246,7 @@ export function runSimulation(
       runSpins++;
 
       // Spin RNG: identical formula to SpinController.requestSpin().
+      // Fresh RNG per spin — never shares state with decisionRng.
       const spinRng = new RNG(seed * 31337 + spinCount);
       for (let i = 0; i < REEL_COUNT; i++) {
         const rawDelta = spinRng.nextInt(1, TAPE_LEN - 1);
@@ -251,7 +259,10 @@ export function runSimulation(
       const available = collectAvailable(digits, claimedIds, cardStatsMap);
 
       if (available.length > 0) {
-        performClaim(chooseCard(available), bet, run, claimedIds, cardStatsMap,
+        const chosen = decisionRng !== null
+          ? chooseCardRandom(available, decisionRng)
+          : chooseCard(available);
+        performClaim(chosen, bet, run, claimedIds, cardStatsMap,
           (payout, mult) => { runWin += payout; runMaxMult = Math.max(runMaxMult, mult); runCardsClaimed++; });
         continue; // proceed to next spin
       }
@@ -272,7 +283,10 @@ export function runSimulation(
             computeDigits(tapes, offsets, TAPE_LEN, digits);
             const avail2 = collectAvailable(digits, claimedIds, cardStatsMap);
             if (avail2.length > 0) {
-              performClaim(chooseCard(avail2), bet, run, claimedIds, cardStatsMap,
+              const chosen2 = decisionRng !== null
+                ? chooseCardRandom(avail2, decisionRng)
+                : chooseCard(avail2);
+              performClaim(chosen2, bet, run, claimedIds, cardStatsMap,
                 (payout, mult) => { runWin += payout; runMaxMult = Math.max(runMaxMult, mult); runCardsClaimed++; });
             }
           }

@@ -335,6 +335,14 @@ async function main() {
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
+
+    // Player is spinning with available (green) cards still on screen — skip them.
+    if (cards.hasAvailable()) {
+      cards.clearAvailable();      // no payout, no claim
+      refreshAllCards();           // clear green highlights immediately
+      toast.show("SKIPPED", { duration: 800 });
+    }
+
     spinController.requestSpin(() => {
       // Evaluate ALL unclaimed cards against the new digits.
       const digits = model.getVisibleCenterDigits();
@@ -344,12 +352,9 @@ async function main() {
       devDrawer.devPanel.refreshInfo();
       if (spinController.lastSpin) devDrawer.devPanel.showLastSpin(spinController.lastSpin.deltas);
 
-      // Gate: if any cards are available the player must claim one before spinning.
+      // Inform the player if there are cards to claim (claiming is optional).
       if (cards.hasAvailable()) {
-        runPanel.setSpinBlocked(true);
-        toast.show("CHOOSE ONE CARD", { duration: 60_000 }); // persistent until replaced
-      } else {
-        runPanel.setSpinBlocked(false);
+        toast.show("CHOOSE ONE OR SPIN ANYWAY", { duration: 60_000 });
       }
 
       if (run.actions === 0) fsm.transition("ended");
@@ -468,7 +473,6 @@ async function main() {
     run.resetRun();
     economy.resetRun();
     cards.resetRun();
-    runPanel.setSpinBlocked(false); // clear any leftover block from a previous run
     model.resetOffsets();
     model.resetLocks();
     spinController.reset();
@@ -526,8 +530,6 @@ async function main() {
     model.resetLocks();
     for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
 
-    // Clear the card-gate and re-enable SPIN.
-    runPanel.setSpinBlocked(false);
     toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
 
     devDrawer.devPanel.refreshInfo();

@@ -8,13 +8,14 @@
  *   --runs=100000          Number of runs to simulate.
  *   --bet=10               Bet amount in FUN (5 | 10 | 20 | 50).
  *   --ante=0               0 = no ante, 1 = ante (+25% bet, +3 actions).
- *   --policy=baseline      "baseline" (no nudges) or "smart" (cheap nudges).
+ *   --policy=baseline      "baseline" | "random" | "smart"
  *   --seedStart=1          First run seed.  Run i gets seed = seedStart + i.
- *   --sample=5000          Rows to write to sim_runs_sample.csv.
+ *   --sample=5000          Rows to write to the sample CSV.
+ *   --tag=                 Optional suffix appended to output filenames, e.g. --tag=step9
  *
- * Outputs (written to ./reports/):
- *   sim_report.json        Full aggregate report.
- *   sim_runs_sample.csv    First `sample` run rows for external analysis.
+ * Outputs (written to ./reports/, auto-named by policy + run count [+ tag]):
+ *   sim_report_{policy}_{runsLabel}[_{tag}].json
+ *   sim_runs_sample_{policy}[_{tag}].csv
  */
 
 import { execSync }     from "child_process";
@@ -25,7 +26,7 @@ import type { Policy }  from "../src/sim/BotStrategy.js";
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
-function parseArgs(): SimConfig & { _reportsDir: string } {
+function parseArgs(): SimConfig & { _reportsDir: string; _tag: string } {
   const argv = process.argv.slice(2);
 
   function flag(name: string, defaultVal: string): string {
@@ -40,13 +41,14 @@ function parseArgs(): SimConfig & { _reportsDir: string } {
   const policy    = flag("policy",    "baseline") as Policy;
   const seedStart = Math.max(0,    parseInt(flag("seedStart", "1"),     10));
   const sample    = Math.max(1,    parseInt(flag("sample",    "5000"),  10));
+  const tag       = flag("tag", "");
 
-  if (!["baseline", "smart"].includes(policy)) {
-    console.error(`Unknown policy "${policy}". Use baseline or smart.`);
+  if (!["baseline", "smart", "random"].includes(policy)) {
+    console.error(`Unknown policy "${policy}". Use baseline, random, or smart.`);
     process.exit(1);
   }
 
-  return { runs, bet, ante, policy, seedStart, sampleSize: sample, _reportsDir: "reports" };
+  return { runs, bet, ante, policy, seedStart, sampleSize: sample, _reportsDir: "reports", _tag: tag };
 }
 
 // ── Git commit hash (best-effort) ─────────────────────────────────────────────
@@ -163,8 +165,15 @@ async function main(): Promise<void> {
   const reportsDir = config._reportsDir;
   mkdirSync(reportsDir, { recursive: true });
 
-  const jsonPath = join(reportsDir, "sim_report.json");
-  const csvPath  = join(reportsDir, "sim_runs_sample.csv");
+  function runsLabel(n: number): string {
+    if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000}m`;
+    if (n >= 1_000     && n % 1_000     === 0) return `${n / 1_000}k`;
+    return `${n}`;
+  }
+
+  const tagSuffix  = config._tag ? `_${config._tag}` : "";
+  const jsonPath   = join(reportsDir, `sim_report_${config.policy}_${runsLabel(config.runs)}${tagSuffix}.json`);
+  const csvPath    = join(reportsDir, `sim_runs_sample_${config.policy}${tagSuffix}.csv`);
 
   writeFileSync(jsonPath, JSON.stringify(report, null, 2), "utf-8");
   writeFileSync(csvPath,  buildCsv(sample), "utf-8");

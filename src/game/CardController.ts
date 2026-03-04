@@ -58,6 +58,16 @@ export class CardController {
   }
 
   /**
+   * Player chose to SPIN instead of claiming any available card.
+   * Clears the available set without counting as a claim so the next spin
+   * can re-evaluate from scratch.  Does NOT set `_claimedThisSpin`.
+   * Does NOT consume RNG.
+   */
+  clearAvailable(): void {
+    this._available.clear();
+  }
+
+  /**
    * Claim one available card.
    * • Adds it to claimed (permanently).
    * • Clears ALL available cards — other matching cards do NOT pay.
