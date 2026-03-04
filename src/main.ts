@@ -5,13 +5,18 @@ import { VisibleDigits } from "./game/TapeReel";
 import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
 import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
+import { CardController } from "./game/CardController";
+import { EconomyController } from "./game/EconomyController";
 import { DevPanel } from "./ui/DevPanel";
+import { CardGrid } from "./ui/CardGrid";
 
 // ── Reel visual constants (must match ReelAnimator internals) ──────────────────
 const REEL_WIDTH      = 72;
 const REEL_HEIGHT     = 160;
 const REEL_GAP        = 10;
 const REEL_AREA_WIDTH = REEL_COUNT * REEL_WIDTH + (REEL_COUNT - 1) * REEL_GAP;
+
+const DEVPANEL_H = 290; // must stay in sync with DevPanel's PANEL_H
 
 const CENTER_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
 const SIDE_STYLE       = new TextStyle({ fontFamily: "monospace", fontSize: 30, fill: 0x888899 });
@@ -84,9 +89,11 @@ async function main() {
   await app.init({ background: 0x12122a, resizeTo: window, antialias: true });
   document.body.appendChild(app.canvas);
 
-  const fsm   = new GameStateMachine();
-  const model = new TapeSlotModel(42);
-  const run   = new RunController();
+  const fsm     = new GameStateMachine();
+  const model   = new TapeSlotModel(42);
+  const run     = new RunController();
+  const cards   = new CardController();
+  const economy = new EconomyController();
 
   // ── Reel views ────────────────────────────────────────────────────────────
   const reelsContainer = new Container();
@@ -109,6 +116,10 @@ async function main() {
   title.anchor.set(0.5, 1);
   app.stage.addChild(title);
 
+  // ── Card grid ─────────────────────────────────────────────────────────────
+  const cardGrid = new CardGrid((cardId) => handleClaim(cardId));
+  app.stage.addChild(cardGrid);
+
   // ── Spin infrastructure ───────────────────────────────────────────────────
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
@@ -118,7 +129,7 @@ async function main() {
     model,
     fsm,
     run,
-    // onAction: after any instant action — refresh visuals
+    // onAction: after any instant action — refresh visuals + cards
     () => {
       refreshAllReels();
       devPanel.refreshInfo();
@@ -146,15 +157,50 @@ async function main() {
     () => {
       spinController.reset();
       devPanel.clearLastSpin();
+      economy.resetRun();
+      cards.resetRun();
       for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+      // Re-evaluate cards against the current (reset) digits
+      const digits = model.getVisibleCenterDigits();
+      cards.updateReady(digits);
+      cardGrid.updateCards(cards.readyIds, cards.claimedIds);
+      cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     },
   );
   app.stage.addChild(devPanel);
 
-  // ── FSM state listener — synchronises all button states ───────────────────
+  // ── Claim handler ─────────────────────────────────────────────────────────
+  function handleClaim(cardId: string): void {
+    // Guard: no claims while reels are spinning
+    if (fsm.state === "running" || fsm.state === "resolve") return;
+    if (!cards.canClaim(cardId)) return;
+
+    const { payoutMult, tier } = cards.claim(cardId);
+    economy.addWin(payoutMult);
+
+    if (tier >= 2) {
+      run.addActions(1);
+      // If the run was ended and we just gained an action, resume to idle.
+      if (fsm.state === "ended" && run.actions > 0) {
+        fsm.transition("idle");
+      }
+    }
+
+    // Refresh card states after claim (some cards may no longer be claimable)
+    const digits = model.getVisibleCenterDigits();
+    cards.updateReady(digits);
+    cardGrid.updateCards(cards.readyIds, cards.claimedIds);
+    cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
+    devPanel.refreshInfo();
+  }
+
+  // ── FSM state listener — synchronises all button + card states ────────────
   fsm.onChange((_, next) => {
     devPanel.syncState(next);
-    devPanel.refreshInfo(); // refresh status text + action counts on every transition
+    devPanel.refreshInfo();
+    // Disable card clicks only during active animation
+    const animating = next === "running" || next === "resolve";
+    cardGrid.setSpin(animating);
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -163,6 +209,11 @@ async function main() {
       updateReelView(reelViews[i], model.reels[i].getVisible());
       updateLockOverlay(reelViews[i], model.isLocked(i));
     }
+    // Keep card ready states current after every digit change
+    const digits = model.getVisibleCenterDigits();
+    cards.updateReady(digits);
+    cardGrid.updateCards(cards.readyIds, cards.claimedIds);
+    cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
   }
 
   function layout(): void {
@@ -175,13 +226,18 @@ async function main() {
     title.x = Math.round(w / 2);
     title.y = reelBlockTop - 10;
 
-    devPanel.x = Math.round((w - 700) / 2);
+    const panelX = Math.round((w - 700) / 2);
+    devPanel.x = panelX;
     devPanel.y = reelBlockTop + REEL_HEIGHT + 30;
+
+    cardGrid.x = panelX;
+    cardGrid.y = devPanel.y + DEVPANEL_H + 18;
   }
 
   refreshAllReels();
   devPanel.refreshInfo();
   devPanel.syncState(fsm.state);
+  cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
   layout();
 
   window.addEventListener("resize", layout);

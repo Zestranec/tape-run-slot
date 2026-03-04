@@ -54,6 +54,14 @@ export class RunController {
     return cost;
   }
 
+  /**
+   * Add `n` actions (e.g. tier-2+ card claim bonus), clamped to maxActions.
+   * Used by the claim handler in main.ts.
+   */
+  addActions(n: number): void {
+    this._actions = Math.min(RunController.MAX_ACTIONS, this._actions + n);
+  }
+
   /** Full run reset: restore actions to max, clear nudge fatigue. */
   resetRun(): void {
     this._actions    = RunController.START_ACTIONS;
