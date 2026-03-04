@@ -10,11 +10,14 @@ import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
 import { CardController } from "./game/CardController";
 import { EconomyController } from "./game/EconomyController";
+import { evaluateCard } from "./game/CardEvaluator";
+import { CARDS } from "./config/cards";
 import { DevDrawer } from "./ui/DevDrawer";
 import { RunPanel } from "./ui/RunPanel";
 import { CardGrid } from "./ui/CardGrid";
 import { BetPanel } from "./ui/BetPanel";
 import { ToastMessage } from "./ui/ToastMessage";
+import { LoadingScreen, loadAssets, logoUrl } from "./ui/LoadingScreen";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VISUAL CONSTANTS
@@ -259,6 +262,35 @@ async function main() {
   await app.init({ background: 0x12122a, resizeTo: window, antialias: true });
   document.body.appendChild(app.canvas);
 
+  // ── Loading screen ─────────────────────────────────────────────────────────
+  const MIN_DURATION = 1500; // ms
+  const startTs      = performance.now();
+
+  // Logo is fetched immediately via Sprite.from(); bar tracks other assets.
+  const loading = new LoadingScreen(logoUrl());
+  loading.layout(app.screen.width, app.screen.height);
+  app.stage.addChild(loading);
+
+  const resizeLoading = () => loading.layout(app.screen.width, app.screen.height);
+  window.addEventListener("resize", resizeLoading);
+
+  const assetsPromise = loadAssets((p) => loading.setProgress(p));
+  const minWaitPromise = assetsPromise.then(() => {
+    const elapsed = performance.now() - startTs;
+    const remaining = Math.max(0, MIN_DURATION - elapsed);
+    return new Promise<void>((r) => setTimeout(r, remaining));
+  });
+
+  await minWaitPromise;
+
+  loading.setProgress(1);
+  // Brief pause so the player sees the full bar before it disappears.
+  await new Promise<void>((r) => setTimeout(r, 120));
+
+  window.removeEventListener("resize", resizeLoading);
+  app.stage.removeChild(loading);
+  // ── End loading screen ─────────────────────────────────────────────────────
+
   const fsm     = new GameStateMachine();
   const model   = new TapeSlotModel(42);
   const run     = new RunController();
@@ -289,7 +321,7 @@ async function main() {
   cardsBlock.addChild(cardsMask);
   cardsBlock.mask = cardsMask;
 
-  const cardGrid = new CardGrid((cardId) => handleCardClick(cardId));
+  const cardGrid = new CardGrid((cardId) => handleCardClick(cardId), app.ticker);
   cardsBlock.addChild(cardGrid);
 
   // ── topBlock — index 1 (in front, hit-tested first) ───────────────────────
@@ -332,6 +364,20 @@ async function main() {
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
 
+  // UI-only set of cards that are one digit away from matching.
+  // Purely visual — never affects payouts, RNG, or simulation.
+  const almostIds = new Set<string>();
+
+  function recomputeAlmostIds(digits: number[]): void {
+    almostIds.clear();
+    for (const card of CARDS) {
+      if (cards.claimedIds.has(card.id))   continue; // already claimed
+      if (cards.availableIds.has(card.id)) continue; // already green (distance=0)
+      const { distance } = evaluateCard(card, digits);
+      if (distance === 1) almostIds.add(card.id);
+    }
+  }
+
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
@@ -339,7 +385,8 @@ async function main() {
     // Player is spinning with available (green) cards still on screen — skip them.
     if (cards.hasAvailable()) {
       cards.clearAvailable();      // no payout, no claim
-      refreshAllCards();           // clear green highlights immediately
+      almostIds.clear();           // stale almost-cards are also gone
+      refreshAllCards();           // clear green/yellow highlights immediately
       toast.show("SKIPPED", { duration: 800 });
     }
 
@@ -347,14 +394,16 @@ async function main() {
       // Evaluate ALL unclaimed cards against the new digits.
       const digits = model.getVisibleCenterDigits();
       cards.onSpinResolved(digits);
+      recomputeAlmostIds(digits);  // compute "almost" for yellow highlights
 
       refreshAllReels();
       devDrawer.devPanel.refreshInfo();
       if (spinController.lastSpin) devDrawer.devPanel.showLastSpin(spinController.lastSpin.deltas);
 
-      // Inform the player if there are cards to claim (claiming is optional).
       if (cards.hasAvailable()) {
         toast.show("CHOOSE ONE OR SPIN ANYWAY", { duration: 60_000 });
+      } else if (almostIds.size > 0) {
+        toast.show("SO CLOSE...", { duration: 60_000 });
       }
 
       if (run.actions === 0) fsm.transition("ended");
@@ -473,6 +522,7 @@ async function main() {
     run.resetRun();
     economy.resetRun();
     cards.resetRun();
+    almostIds.clear();
     model.resetOffsets();
     model.resetLocks();
     spinController.reset();
@@ -495,9 +545,9 @@ async function main() {
 
   // ── Card helpers ────────────────────────────────────────────────────────────
 
-  /** Centralised card-grid refresh. Passes current available/claimed sets. */
+  /** Centralised card-grid refresh. Passes current available/claimed/almost sets. */
   function refreshAllCards(): void {
-    cardGrid.updateCards(cards.availableIds, cards.claimedIds);
+    cardGrid.updateCards(cards.availableIds, cards.claimedIds, almostIds);
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     runPanel.refresh(economy.totalWin, cards.claimedIds.size);
   }
@@ -530,7 +580,11 @@ async function main() {
     model.resetLocks();
     for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
 
-    toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
+    if (almostIds.size > 0) {
+      toast.show("LOCKS CLEARED  •  SO CLOSE  •  SPIN TO CONTINUE", { duration: 1400 });
+    } else {
+      toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
+    }
 
     devDrawer.devPanel.refreshInfo();
     syncReelControls(fsm.state);
