@@ -1,20 +1,18 @@
-export type GameState = "idle" | "running" | "resolve" | "ended";
+export type GameState = "betting" | "idle" | "running" | "resolve" | "ended";
 
 type StateChangeListener = (prev: GameState, next: GameState) => void;
 
 export class GameStateMachine {
-  private _state: GameState = "idle";
+  private _state: GameState = "betting";
   private listeners: StateChangeListener[] = [];
 
   get state(): GameState { return this._state; }
 
-  get isIdle(): boolean  { return this._state === "idle";   }
-  get isEnded(): boolean { return this._state === "ended";  }
+  get isBetting(): boolean { return this._state === "betting"; }
+  get isIdle(): boolean    { return this._state === "idle";    }
+  get isEnded(): boolean   { return this._state === "ended";   }
 
-  /**
-   * True while animation is running (running/resolve) OR the run has ended.
-   * Used as a blanket guard for all game actions.
-   */
+  /** True when game actions (spin, nudge, lock, card claim) should be blocked. */
   get isLocked(): boolean { return this._state !== "idle"; }
 
   onChange(listener: StateChangeListener): void {
@@ -25,10 +23,11 @@ export class GameStateMachine {
     if (this._state === to) return;
 
     const validTransitions: Record<GameState, GameState[]> = {
-      idle:    ["running", "ended"],   // ended: run out of actions while idle
-      running: ["resolve"],
-      resolve: ["idle", "ended"],      // ended: actions hit 0 while resolve completes
-      ended:   ["idle"],               // New Run
+      betting: ["idle"],                 // START RUN
+      idle:    ["running", "ended"],     // spin start; nudge uses last action
+      running: ["resolve"],              // animation done
+      resolve: ["idle", "ended"],        // normal; actions hit 0
+      ended:   ["idle", "betting"],      // tier2+ claim resumes; RETURN TO BETTING
     };
 
     if (!validTransitions[this._state].includes(to)) {

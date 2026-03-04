@@ -1,6 +1,7 @@
 import {
   Container,
   Graphics,
+  Rectangle,
   Text,
   TextStyle,
   FederatedPointerEvent,
@@ -47,6 +48,7 @@ interface CardView {
 
 export class CardGrid extends Container {
   private cardViews = new Map<string, CardView>();
+  private summaryBetText!: Text;
   private summaryWinText!: Text;
   private summaryClaimedText!: Text;
 
@@ -72,12 +74,13 @@ export class CardGrid extends Container {
     bg.roundRect(0, 0, CardGrid.GRID_W, SUMMARY_H, 4);
     bg.fill({ color: 0x16162c });
     bg.stroke({ color: 0x3a3a5a, width: 1 });
+    bg.eventMode = "none"; // background decoration only — must not absorb pointer events
     this.addChild(bg);
 
-    const betLabel = new Text({ text: "Bet: 10 FUN", style: SUMMARY_STYLE });
-    betLabel.x = 8;
-    betLabel.y = Math.round((SUMMARY_H - betLabel.height) / 2);
-    this.addChild(betLabel);
+    this.summaryBetText = new Text({ text: "Bet: 10 FUN", style: SUMMARY_STYLE });
+    this.summaryBetText.x = 8;
+    this.summaryBetText.y = Math.round((SUMMARY_H - this.summaryBetText.height) / 2);
+    this.addChild(this.summaryBetText);
 
     this.summaryWinText = new Text({ text: "Win: 0.00 FUN", style: SUMMARY_WIN_STYLE });
     this.summaryWinText.anchor.set(0.5, 0);
@@ -114,6 +117,9 @@ export class CardGrid extends Container {
     c.y = cy;
     c.eventMode = "static";
     c.cursor = "pointer";
+    // Explicit hit area so text children that overflow their visual bounds
+    // never expand the hittable region beyond the card rectangle.
+    c.hitArea = new Rectangle(0, 0, CARD_W, CARD_H);
 
     // Background
     const bg = new Graphics();
@@ -184,8 +190,9 @@ export class CardGrid extends Container {
     }
   }
 
-  updateSummary(totalWin: number, claimedCount: number, _baseBet: number): void {
-    this.summaryWinText.text = `Win: ${totalWin.toFixed(2)} FUN`;
+  updateSummary(totalWin: number, claimedCount: number, baseBet: number): void {
+    this.summaryBetText.text     = `Bet: ${baseBet} FUN`;
+    this.summaryWinText.text     = `Win: ${totalWin.toFixed(2)} FUN`;
     this.summaryClaimedText.text = `Claimed: ${claimedCount} / 20`;
   }
 

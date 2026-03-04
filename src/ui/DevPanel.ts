@@ -100,7 +100,6 @@ export class DevPanel extends Container {
   private onAction: () => void;
   private onSeedRebuild?: () => void;
   private onSpin?: () => void;
-  private onNewRun?: () => void;
 
   private randomCounter = 0;
 
@@ -126,7 +125,6 @@ export class DevPanel extends Container {
     onAction: () => void,
     onSeedRebuild?: () => void,
     onSpin?: () => void,
-    onNewRun?: () => void,
   ) {
     super();
     this.model = model;
@@ -136,7 +134,6 @@ export class DevPanel extends Container {
     this.onAction = onAction;
     this.onSeedRebuild = onSeedRebuild;
     this.onSpin = onSpin;
-    this.onNewRun = onNewRun;
     this.build();
   }
 
@@ -168,10 +165,11 @@ export class DevPanel extends Container {
   }
 
   /**
-   * Guard for seed/meta actions — allowed in idle or ended, blocked during animation.
+   * Guard for seed/meta actions — allowed in idle, ended, or betting; blocked during animation.
    */
   private guardSeedAction(fn: () => void): void {
-    if (this.fsm.state === "running" || this.fsm.state === "resolve") return;
+    const s = this.fsm.state;
+    if (s === "running" || s === "resolve") return;
     fn();
     this.onAction();
   }
@@ -218,7 +216,7 @@ export class DevPanel extends Container {
     // ── Row: actions + nudge cost + run status ─────────────────────────────────
     this.addChild(Object.assign(new Text({ text: "Actions:", style: LABEL_STYLE }), { x: X, y }));
     this.actionsText = Object.assign(
-      new Text({ text: `${this.run.actions} / ${RunController.MAX_ACTIONS}`, style: ACTIONS_OK_STYLE }),
+      new Text({ text: `${this.run.actions} / ${this.run.maxActions}`, style: ACTIONS_OK_STYLE }),
       { x: X + 72, y }
     );
     this.addChild(this.actionsText);
@@ -339,7 +337,7 @@ export class DevPanel extends Container {
     bNudgeDown.x = X + 244; bNudgeDown.y = y;
     y += 36;
 
-    // ── Row: utility + SPIN + New Run ──────────────────────────────────────────
+    // ── Row: utility + SPIN ────────────────────────────────────────────────────
     const bRand = this.regGame(makeButton("Randomize Offsets", 156, 26, () => this.guardAction(() => {
       this.randomCounter++;
       this.model.randomizeOffsets(new RNG(this.seedValue * 9999 + this.randomCounter));
@@ -349,24 +347,7 @@ export class DevPanel extends Container {
     const bReset = this.regGame(makeButton("Reset Offsets to 0", 160, 26, () => this.guardAction(() => this.model.resetOffsets())));
     bReset.x = X + 166; bReset.y = y;
 
-    // New Run — available in idle AND ended (only blocked during animation).
-    const bNewRun = this.regSeed(makeButton("New Run", 88, 26, () => {
-      if (this.fsm.state === "running" || this.fsm.state === "resolve") return;
-      // Reset economy and model state.
-      this.run.resetRun();
-      this.model.resetOffsets();
-      this.model.resetLocks();
-      // If run was ended, transition back to idle.
-      if (this.fsm.state === "ended") {
-        this.fsm.transition("idle");
-      }
-      this.refreshInfo();
-      this.onAction();
-      this.onNewRun?.();
-    }, { fill: 0x1a3000, stroke: 0x336600, hoverTint: 0x88cc44 }));
-    bNewRun.x = X + 340; bNewRun.y = y;
-
-    // SPIN — game button (disabled during animation and ended).
+    // SPIN — game button (disabled during animation, ended, and betting).
     const bSpin = this.regGame(makeButton("SPIN", 100, 32, () => {
       if (this.fsm.state !== "idle") return;
       if (!this.run.canSpend(1)) return;
@@ -379,16 +360,15 @@ export class DevPanel extends Container {
 
   /**
    * Synchronise button enable/disable state with the FSM state.
-   * Called via fsm.onChange in main.ts.
    *
    *   animating (running/resolve): disable ALL buttons.
-   *   ended:                       disable game buttons; keep seed/meta buttons enabled.
+   *   ended / betting:             disable game buttons; keep seed/meta buttons enabled.
    *   idle:                        enable ALL buttons.
    */
   syncState(state: GameState): void {
-    const animating = state === "running" || state === "resolve";
-    const ended     = state === "ended";
-    for (const btn of this.lockableButtons) setDisabled(btn, animating || ended);
+    const animating    = state === "running" || state === "resolve";
+    const gameDisabled = animating || state === "ended" || state === "betting";
+    for (const btn of this.lockableButtons) setDisabled(btn, gameDisabled);
     for (const btn of this.seedButtons)     setDisabled(btn, animating);
   }
 
@@ -416,13 +396,21 @@ export class DevPanel extends Container {
 
     // Actions + nudge cost
     const acts = this.run.actions;
-    this.actionsText.text  = `${acts} / ${RunController.MAX_ACTIONS}`;
+    this.actionsText.text  = `${acts} / ${this.run.maxActions}`;
     this.actionsText.style = acts === 0 ? ACTIONS_ZERO_STYLE : acts <= 4 ? ACTIONS_LOW_STYLE : ACTIONS_OK_STYLE;
     this.nudgeCostText.text = `${this.run.getNudgeCost()} ⚡`;
 
     // Run status
-    const ended = this.fsm.state === "ended";
-    this.runStatusText.text  = ended ? "RUN ENDED" : "ACTIVE";
-    this.runStatusText.style = ended ? STATUS_END_STYLE : STATUS_OK_STYLE;
+    const st = this.fsm.state;
+    if (st === "betting") {
+      this.runStatusText.text  = "BETTING";
+      this.runStatusText.style = STATUS_OK_STYLE;
+    } else if (st === "ended") {
+      this.runStatusText.text  = "RUN ENDED";
+      this.runStatusText.style = STATUS_END_STYLE;
+    } else {
+      this.runStatusText.text  = "ACTIVE";
+      this.runStatusText.style = STATUS_OK_STYLE;
+    }
   }
 }

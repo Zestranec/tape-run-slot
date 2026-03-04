@@ -1,5 +1,5 @@
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import { GameStateMachine } from "./core/GameStateMachine";
+import { Application, Container, Graphics, Text, TextStyle, FederatedPointerEvent } from "pixi.js";
+import { GameStateMachine, GameState } from "./core/GameStateMachine";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
 import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
@@ -7,29 +7,71 @@ import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
 import { CardController } from "./game/CardController";
 import { EconomyController } from "./game/EconomyController";
-import { DevPanel } from "./ui/DevPanel";
+import { DevDrawer } from "./ui/DevDrawer";
+import { RunPanel } from "./ui/RunPanel";
 import { CardGrid } from "./ui/CardGrid";
+import { BetPanel } from "./ui/BetPanel";
 
-// ── Reel visual constants (must match ReelAnimator internals) ──────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// REEL VISUAL CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
 const REEL_WIDTH      = 72;
 const REEL_HEIGHT     = 160;
 const REEL_GAP        = 10;
 const REEL_AREA_WIDTH = REEL_COUNT * REEL_WIDTH + (REEL_COUNT - 1) * REEL_GAP;
 
-const DEVPANEL_H = 290; // must stay in sync with DevPanel's PANEL_H
+// ─────────────────────────────────────────────────────────────────────────────
+// LAYOUT CONSTANTS
+//
+// Everything inside gameRoot uses fixed local y offsets so no element can
+// ever overlap another, regardless of screen size.
+//
+//   gameRoot.y = PAD_TOP                                 (= 16)
+//
+//   topBlock  (y=0 in gameRoot)
+//   ├── title              y = REEL_TOP - 6              (= 38, anchor-bottom)
+//   ├── reelsContainer     y = REEL_TOP                  (= 44)
+//   ├── runPanel           y = PANEL_TOP  (run states)   (= 218)
+//   └── betPanelContainer  y = PANEL_TOP  (betting only) (= 218)
+//
+//   cardsBlock  y = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP  (= 322)
+//   └── cardsContainer     y = 0
+//
+// During betting the cardsBlock is hidden, so betPanel's extra height (160)
+// over runPanel's height (88) never causes a visual gap.
+// ─────────────────────────────────────────────────────────────────────────────
+const UI_W        = 700;
+const PAD_TOP     = 16;          // gameRoot top padding
+const REEL_TOP    = 44;          // reels y inside topBlock
+const PANEL_GAP   = 14;          // between reel bottom and panel top
+const BLOCK_GAP   = 16;          // between panel bottom and cardsBlock top
 
+// Derived:
+const PANEL_TOP   = REEL_TOP + REEL_HEIGHT + PANEL_GAP; // 218
+// cardsBlock.y = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP  — computed after RunPanel import
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEXT STYLES
+// ─────────────────────────────────────────────────────────────────────────────
 const CENTER_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
 const SIDE_STYLE       = new TextStyle({ fontFamily: "monospace", fontSize: 30, fill: 0x888899 });
 const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
+const END_TITLE_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 20, fill: 0xff4444, fontWeight: "bold" });
+const END_STAT_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff });
+const END_PROFIT_POS   = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0x44ff88, fontWeight: "bold" });
+const END_PROFIT_NEG   = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0xff4444, fontWeight: "bold" });
+const END_BTN_STYLE    = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
 
-// ReelView satisfies the ReelViewRef interface from ReelAnimator, plus lock-overlay refs.
+// ─────────────────────────────────────────────────────────────────────────────
+// REEL VIEW
+// ─────────────────────────────────────────────────────────────────────────────
 interface ReelView extends ReelViewRef {
-  container: Container;
-  aboveText: Text;
-  centerText: Text;
-  belowText: Text;
+  container:   Container;
+  aboveText:   Text;
+  centerText:  Text;
+  belowText:   Text;
   lockOverlay: Graphics;
-  lockLabel: Text;
+  lockLabel:   Text;
 }
 
 function createReelView(): ReelView {
@@ -56,7 +98,6 @@ function createReelView(): ReelView {
   belowText.x = REEL_WIDTH / 2; belowText.y = REEL_HEIGHT - 30; belowText.alpha = 0.4;
   container.addChild(belowText);
 
-  // Lock overlay — amber tinted rect + "LOCK" label, hidden by default.
   const lockOverlay = new Graphics();
   lockOverlay.roundRect(1, 1, REEL_WIDTH - 2, REEL_HEIGHT - 2, 5);
   lockOverlay.fill({ color: 0xffaa00, alpha: 0.18 });
@@ -84,6 +125,7 @@ function updateLockOverlay(view: ReelView, locked: boolean): void {
   view.lockLabel.visible   = locked;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
 async function main() {
   const app = new Application();
   await app.init({ background: 0x12122a, resizeTo: window, antialias: true });
@@ -95,84 +137,173 @@ async function main() {
   const cards   = new CardController();
   const economy = new EconomyController();
 
-  // ── Reel views ────────────────────────────────────────────────────────────
-  const reelsContainer = new Container();
-  app.stage.addChild(reelsContainer);
+  // ══════════════════════════════════════════════════════════════════════════
+  // GAME ROOT
+  // Single movable anchor on stage. layout() only adjusts gameRoot.x/y.
+  // All children use fixed local coordinates — overlap is structurally
+  // impossible without changing the constants above.
+  //
+  // Z-ORDER within gameRoot:
+  //   index 0 — cardsBlock  (behind, must not intercept topBlock events)
+  //   index 1 — topBlock    (in front, always receives events first)
+  //
+  // PixiJS tests hits from highest index (front) to lowest (back), so
+  // topBlock always wins before cardsBlock is ever tested.
+  // ══════════════════════════════════════════════════════════════════════════
+  const gameRoot = new Container();
+  app.stage.addChild(gameRoot);
 
-  const reelViews: ReelView[] = [];
-  for (let i = 0; i < REEL_COUNT; i++) {
-    const rv = createReelView();
-    rv.container.x = i * (REEL_WIDTH + REEL_GAP);
-    rv.container.y = 0;
-    reelsContainer.addChild(rv.container);
-    reelViews.push(rv);
-  }
+  // ── cardsBlock — added FIRST (index 0 = behind topBlock) ──────────────────
+  // CARDS_TOP = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP = 218 + 88 + 16 = 322
+  const CARDS_TOP = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP;
 
-  // ── Title ─────────────────────────────────────────────────────────────────
+  const cardsBlock = new Container();
+  cardsBlock.y = CARDS_TOP;
+  // "passive": the container itself has no hit area of its own, only its
+  // explicitly interactive children (individual card containers) are tested.
+  cardsBlock.eventMode = "passive";
+  gameRoot.addChild(cardsBlock); // index 0 — rendered behind topBlock
+
+  // Clip mask — prevents cards from rendering or receiving events outside
+  // their designated rectangle.
+  const cardsMask = new Graphics();
+  cardsMask.rect(0, 0, CardGrid.GRID_W, CardGrid.TOTAL_H);
+  cardsMask.fill(0xffffff);
+  cardsBlock.addChild(cardsMask);
+  cardsBlock.mask = cardsMask;
+
+  const cardGrid = new CardGrid((cardId) => handleClaim(cardId));
+  cardsBlock.addChild(cardGrid);
+
+  // ── topBlock — added SECOND (index 1 = in front of cardsBlock) ────────────
+  const topBlock = new Container();
+  gameRoot.addChild(topBlock); // index 1 — rendered in front, hit-tested first
+
+  // Title — bottom-anchored, text sits above REEL_TOP
   const title = new Text({
     text: "TAPE RUN SLOT",
     style: new TextStyle({ fontFamily: "monospace", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
   });
   title.anchor.set(0.5, 1);
-  app.stage.addChild(title);
+  title.x = Math.round(UI_W / 2);
+  title.y = REEL_TOP - 6; // bottom of text is 6 px above reel box
+  topBlock.addChild(title);
 
-  // ── Card grid ─────────────────────────────────────────────────────────────
-  const cardGrid = new CardGrid((cardId) => handleClaim(cardId));
-  app.stage.addChild(cardGrid);
+  // Reels — centred horizontally within UI_W
+  const reelsContainer = new Container();
+  reelsContainer.x = Math.round((UI_W - REEL_AREA_WIDTH) / 2);
+  reelsContainer.y = REEL_TOP;
+  topBlock.addChild(reelsContainer);
 
-  // ── Spin infrastructure ───────────────────────────────────────────────────
+  const reelViews: ReelView[] = [];
+  for (let i = 0; i < REEL_COUNT; i++) {
+    const rv = createReelView();
+    rv.container.x = i * (REEL_WIDTH + REEL_GAP);
+    reelsContainer.addChild(rv.container);
+    reelViews.push(rv);
+  }
+
+  // RunPanel — HUD + SPIN button; shown during all run states, hidden in betting
+  // y = PANEL_TOP so it always starts immediately below the reel block.
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
 
-  // ── Dev panel ─────────────────────────────────────────────────────────────
-  const devPanel = new DevPanel(
-    model,
-    fsm,
-    run,
-    // onAction: after any instant action — refresh visuals + cards
-    () => {
+  // Shared spin handler — used by both RunPanel and DevPanel (inside DevDrawer)
+  function doSpin(): void {
+    if (fsm.state !== "idle") return;
+    if (!run.canSpend(1)) return;
+    spinController.requestSpin(() => {
       refreshAllReels();
-      devPanel.refreshInfo();
-    },
-    // onSeedRebuild: reset spin sequence, clear overlays and last-spin display
-    () => {
-      spinController.reset();
-      devPanel.clearLastSpin();
-      for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
-    },
-    // onSpin: kick off a spin (SpinController enforces canSpend guard)
-    () => {
-      spinController.requestSpin(() => {
-        refreshAllReels();
-        devPanel.refreshInfo();
-        if (spinController.lastSpin) devPanel.showLastSpin(spinController.lastSpin.deltas);
+      devDrawer.devPanel.refreshInfo();
+      if (spinController.lastSpin) devDrawer.devPanel.showLastSpin(spinController.lastSpin.deltas);
+      if (run.actions === 0) fsm.transition("ended");
+    });
+  }
 
-        // If the spin consumed the last action, end the run.
-        if (run.actions === 0) {
-          fsm.transition("ended");
-        }
-      });
-    },
-    // onNewRun: called after DevPanel resets run state — clean up external refs
+  const runPanel = new RunPanel(run, economy, doSpin);
+  runPanel.y = PANEL_TOP;
+  topBlock.addChild(runPanel);
+
+  // BetPanel — shown only in betting state, same vertical slot as runPanel
+  const betPanelContainer = new Container();
+  betPanelContainer.y = PANEL_TOP;
+  topBlock.addChild(betPanelContainer);
+
+  const betPanel = new BetPanel(economy, run, () => handleStartRun());
+  betPanelContainer.addChild(betPanel);
+
+  // ── DevDrawer — stage-level bottom overlay (not part of layout blocks) ────
+  const devDrawer = new DevDrawer(
+    model, fsm, run,
+    app.ticker,
+    () => { refreshAllReels(); devDrawer.devPanel.refreshInfo(); },
     () => {
       spinController.reset();
-      devPanel.clearLastSpin();
-      economy.resetRun();
-      cards.resetRun();
+      devDrawer.devPanel.clearLastSpin();
       for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
-      // Re-evaluate cards against the current (reset) digits
-      const digits = model.getVisibleCenterDigits();
-      cards.updateReady(digits);
-      cardGrid.updateCards(cards.readyIds, cards.claimedIds);
-      cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     },
+    doSpin,
   );
-  app.stage.addChild(devPanel);
 
-  // ── Claim handler ─────────────────────────────────────────────────────────
+  // ── End overlay — stage-level, floats above the reel area ─────────────────
+  // buildEndOverlay is a function *declaration* (hoisted) so it can be called
+  // here even though its source text appears later in main().
+  // Declaring endOverlay as a const here (before applyVisibility is ever called)
+  // eliminates the TDZ that caused the original ReferenceError.
+  const endOverlayData = buildEndOverlay();
+  const endOverlay     = endOverlayData.container;
+  endOverlay.visible   = false;
+  app.stage.addChild(endOverlay);
+
+  // DevDrawer is the topmost stage element so its handle is always hittable
+  app.stage.addChild(devDrawer.container);
+
+  // ── Visibility ────────────────────────────────────────────────────────────
+  function applyVisibility(state: GameState): void {
+    const betting = state === "betting";
+    const inRun   = !betting;
+
+    // topBlock children
+    title.visible             = inRun;
+    runPanel.visible          = inRun;
+    betPanelContainer.visible = betting;
+
+    // cardsBlock — visible only during run
+    cardsBlock.visible     = inRun;
+    endOverlay.visible     = state === "ended";
+
+    if (state === "ended") refreshEndOverlay();
+  }
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  function handleStartRun(): void {
+    if (fsm.state !== "betting") return;
+
+    run.configure(economy.anteEnabled);
+    run.resetRun();
+    economy.resetRun();
+    cards.resetRun();
+    model.resetOffsets();
+    model.resetLocks();
+    spinController.reset();
+    devDrawer.devPanel.clearLastSpin();
+    for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+
+    fsm.transition("idle");
+
+    refreshAllReels();
+    devDrawer.devPanel.refreshInfo();
+  }
+
+  function handleReturnToBetting(): void {
+    if (fsm.state !== "ended") return;
+    fsm.transition("betting");
+    betPanel.refresh();
+  }
+
   function handleClaim(cardId: string): void {
-    // Guard: no claims while reels are spinning
-    if (fsm.state === "running" || fsm.state === "resolve") return;
+    const s = fsm.state;
+    if (s !== "idle" && s !== "ended") return;
     if (!cards.canClaim(cardId)) return;
 
     const { payoutMult, tier } = cards.claim(cardId);
@@ -180,66 +311,138 @@ async function main() {
 
     if (tier >= 2) {
       run.addActions(1);
-      // If the run was ended and we just gained an action, resume to idle.
-      if (fsm.state === "ended" && run.actions > 0) {
-        fsm.transition("idle");
-      }
+      if (s === "ended" && run.actions > 0) fsm.transition("idle");
     }
 
-    // Refresh card states after claim (some cards may no longer be claimable)
     const digits = model.getVisibleCenterDigits();
     cards.updateReady(digits);
     cardGrid.updateCards(cards.readyIds, cards.claimedIds);
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
-    devPanel.refreshInfo();
+    runPanel.refresh(economy.totalWin, cards.claimedIds.size);
+    devDrawer.devPanel.refreshInfo();
+
+    if (fsm.state === "ended") refreshEndOverlay();
   }
 
-  // ── FSM state listener — synchronises all button + card states ────────────
+  // ── FSM listener ──────────────────────────────────────────────────────────
   fsm.onChange((_, next) => {
-    devPanel.syncState(next);
-    devPanel.refreshInfo();
-    // Disable card clicks only during active animation
+    devDrawer.devPanel.syncState(next);
+    devDrawer.devPanel.refreshInfo();
+    runPanel.syncState(next);
+
     const animating = next === "running" || next === "resolve";
     cardGrid.setSpin(animating);
+    devDrawer.setSpinLocked(animating);
+
+    applyVisibility(next);
   });
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Refresh helpers ────────────────────────────────────────────────────────
   function refreshAllReels(): void {
     for (let i = 0; i < REEL_COUNT; i++) {
       updateReelView(reelViews[i], model.reels[i].getVisible());
       updateLockOverlay(reelViews[i], model.isLocked(i));
     }
-    // Keep card ready states current after every digit change
     const digits = model.getVisibleCenterDigits();
     cards.updateReady(digits);
     cardGrid.updateCards(cards.readyIds, cards.claimedIds);
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
+    runPanel.refresh(economy.totalWin, cards.claimedIds.size);
   }
 
+  // ── End overlay ───────────────────────────────────────────────────────────
+  interface EndOverlay {
+    container:  Container;
+    winText:    Text;
+    betText:    Text;
+    profitText: Text;
+  }
+
+  function buildEndOverlay(): EndOverlay {
+    const c = new Container();
+    const OW = 340, OH = 180;
+
+    const bg = new Graphics();
+    bg.roundRect(0, 0, OW, OH, 10);
+    bg.fill({ color: 0x0a0a20, alpha: 0.95 });
+    bg.stroke({ color: 0xff4444, width: 2 });
+    bg.eventMode = "none";
+    c.addChild(bg);
+
+    const t = new Text({ text: "RUN FINISHED", style: END_TITLE_STYLE });
+    t.anchor.set(0.5, 0); t.x = OW / 2; t.y = 14;
+    c.addChild(t);
+
+    const winText = new Text({ text: "", style: END_STAT_STYLE });
+    winText.anchor.set(0.5, 0); winText.x = OW / 2; winText.y = 50;
+    c.addChild(winText);
+
+    const betText = new Text({ text: "", style: END_STAT_STYLE });
+    betText.anchor.set(0.5, 0); betText.x = OW / 2; betText.y = 72;
+    c.addChild(betText);
+
+    const profitText = new Text({ text: "", style: END_PROFIT_POS });
+    profitText.anchor.set(0.5, 0); profitText.x = OW / 2; profitText.y = 98;
+    c.addChild(profitText);
+
+    const btnW = 220, btnH = 32;
+    const btn = new Container();
+    btn.eventMode = "static"; btn.cursor = "pointer";
+    const bBg = new Graphics();
+    bBg.roundRect(0, 0, btnW, btnH, 5);
+    bBg.fill({ color: 0x333366 }); bBg.stroke({ color: 0x6666cc, width: 2 });
+    btn.addChild(bBg);
+    const bTxt = new Text({ text: "RETURN TO BETTING", style: END_BTN_STYLE });
+    bTxt.x = Math.round((btnW - bTxt.width) / 2);
+    bTxt.y = Math.round((btnH - bTxt.height) / 2);
+    btn.addChild(bTxt);
+    btn.on("pointerdown", (e: FederatedPointerEvent) => { e.stopPropagation(); handleReturnToBetting(); });
+    btn.on("pointerover", () => { bBg.tint = 0xaaaaff; });
+    btn.on("pointerout",  () => { bBg.tint = 0xffffff; });
+    btn.x = Math.round((OW - btnW) / 2);
+    btn.y = OH - btnH - 12;
+    c.addChild(btn);
+
+    return { container: c, winText, betText, profitText };
+  }
+
+  function refreshEndOverlay(): void {
+    endOverlayData.winText.text = `Total Win: ${economy.totalWin.toFixed(2)} FUN`;
+    endOverlayData.betText.text = `Total Bet: ${economy.totalBet.toFixed(2)} FUN`;
+    const p = economy.profit;
+    endOverlayData.profitText.text  = `Profit: ${p >= 0 ? "+" : ""}${p.toFixed(2)} FUN`;
+    endOverlayData.profitText.style = p >= 0 ? END_PROFIT_POS : END_PROFIT_NEG;
+  }
+
+  // ── Layout ────────────────────────────────────────────────────────────────
+  // Only gameRoot.x needs to change on resize — all children use fixed local
+  // coordinates, so nothing inside can shift relative to one another.
   function layout(): void {
     const w = app.screen.width;
-    const reelBlockTop = 60;
+    const h = app.screen.height;
 
-    reelsContainer.x = Math.round((w - REEL_AREA_WIDTH) / 2);
-    reelsContainer.y = reelBlockTop;
+    // Centre the entire content column on the screen
+    gameRoot.x = Math.round((w - UI_W) / 2);
+    gameRoot.y = PAD_TOP;
 
-    title.x = Math.round(w / 2);
-    title.y = reelBlockTop - 10;
+    // End overlay: horizontally centred; vertically aligned with reel top
+    endOverlay.x = Math.round((w - 340) / 2);
+    endOverlay.y = PAD_TOP + REEL_TOP; // absolute reel top = 16 + 44 = 60
 
-    const panelX = Math.round((w - 700) / 2);
-    devPanel.x = panelX;
-    devPanel.y = reelBlockTop + REEL_HEIGHT + 30;
-
-    cardGrid.x = panelX;
-    cardGrid.y = devPanel.y + DEVPANEL_H + 18;
+    // DevDrawer: pinned to screen bottom
+    devDrawer.resize(w, h);
   }
 
+  // ── Boot ──────────────────────────────────────────────────────────────────
   refreshAllReels();
-  devPanel.refreshInfo();
-  devPanel.syncState(fsm.state);
+  devDrawer.devPanel.refreshInfo();
+  devDrawer.devPanel.syncState(fsm.state);
+  runPanel.syncState(fsm.state);
   cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
-  layout();
 
+  applyVisibility(fsm.state); // starts in "betting"
+
+  layout();
   window.addEventListener("resize", layout);
 }
 
