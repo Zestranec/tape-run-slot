@@ -1,4 +1,7 @@
-import { Application, Container, Graphics, Text, TextStyle, FederatedPointerEvent } from "pixi.js";
+import {
+  Application, Container, Graphics, Rectangle,
+  Text, TextStyle, FederatedPointerEvent,
+} from "pixi.js";
 import { GameStateMachine, GameState } from "./core/GameStateMachine";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
@@ -20,35 +23,42 @@ const REEL_HEIGHT     = 160;
 const REEL_GAP        = 10;
 const REEL_AREA_WIDTH = REEL_COUNT * REEL_WIDTH + (REEL_COUNT - 1) * REEL_GAP;
 
+// ── Per-reel control sizes ────────────────────────────────────────────────────
+const NUDGE_H   = 18;  // nudge triangle button height
+const NUDGE_GAP = 3;   // gap between nudge button and reel box
+const LOCK_H    = 16;  // lock button height (below reel)
+
+// Controls above and below each reel box:
+const CTRL_ABOVE  = NUDGE_H + NUDGE_GAP;              // 21 px
+const CTRL_BELOW  = NUDGE_GAP + NUDGE_H + 3 + LOCK_H; // 40 px  (gap+nudge+gap+lock)
+const REEL_SLOT_H = CTRL_ABOVE + REEL_HEIGHT + CTRL_BELOW; // 221 px per slot
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT CONSTANTS
 //
-// Everything inside gameRoot uses fixed local y offsets so no element can
-// ever overlap another, regardless of screen size.
+//   gameRoot.y = PAD_TOP = 16
 //
-//   gameRoot.y = PAD_TOP                                 (= 16)
+//   topBlock (y=0)
+//   ├── title              y = 38  (anchor-bottom; text above; 4 px gap to slot top)
+//   ├── reelsContainer     y = REEL_SLOT_Y = 42
+//   │     └── slot[i]        y = 0 within reelsContainer
+//   │           ├── nudgeUp      y = 0
+//   │           ├── reelBox      y = CTRL_ABOVE = 21   (animated by ReelAnimator)
+//   │           ├── nudgeDown    y = 21 + 160 + 3 = 184
+//   │           └── lockBtn      y = 205
+//   ├── runPanel           y = PANEL_TOP = 277  (run states)
+//   └── betPanelContainer  y = PANEL_TOP = 277  (betting only)
 //
-//   topBlock  (y=0 in gameRoot)
-//   ├── title              y = REEL_TOP - 6              (= 38, anchor-bottom)
-//   ├── reelsContainer     y = REEL_TOP                  (= 44)
-//   ├── runPanel           y = PANEL_TOP  (run states)   (= 218)
-//   └── betPanelContainer  y = PANEL_TOP  (betting only) (= 218)
+//   cardsBlock  y = CARDS_TOP = 381  (= PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP)
 //
-//   cardsBlock  y = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP  (= 322)
-//   └── cardsContainer     y = 0
-//
-// During betting the cardsBlock is hidden, so betPanel's extra height (160)
-// over runPanel's height (88) never causes a visual gap.
+// cardsBlock.y is a compile-time constant — overlap is impossible.
 // ─────────────────────────────────────────────────────────────────────────────
 const UI_W        = 700;
-const PAD_TOP     = 16;          // gameRoot top padding
-const REEL_TOP    = 44;          // reels y inside topBlock
-const PANEL_GAP   = 14;          // between reel bottom and panel top
-const BLOCK_GAP   = 16;          // between panel bottom and cardsBlock top
-
-// Derived:
-const PANEL_TOP   = REEL_TOP + REEL_HEIGHT + PANEL_GAP; // 218
-// cardsBlock.y = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP  — computed after RunPanel import
+const PAD_TOP     = 16;
+const REEL_SLOT_Y = 42;  // reelsContainer.y in topBlock (4 px below title bottom at 38)
+const PANEL_GAP   = 14;
+const BLOCK_GAP   = 16;
+const PANEL_TOP   = REEL_SLOT_Y + REEL_SLOT_H + PANEL_GAP; // 42 + 221 + 14 = 277
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TEXT STYLES
@@ -62,56 +72,154 @@ const END_PROFIT_POS   = new TextStyle({ fontFamily: "monospace", fontSize: 16, 
 const END_PROFIT_NEG   = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0xff4444, fontWeight: "bold" });
 const END_BTN_STYLE    = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
 
+// Lock button text styles (pre-allocated, reused in updateLockOverlay)
+const LOCK_BTN_OFF_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0x6666aa });
+const LOCK_BTN_ON_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xffaa00, fontWeight: "bold" });
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VIEW
+//
+//   slot        — outer wrapper added to reelsContainer; holds nudge+lock btns
+//   container   — reel box at y=CTRL_ABOVE in slot; THIS is what ReelAnimator
+//                 touches (text positions, clip mask). Never move it externally.
+//   nudgeUp/Down — triangle buttons outside the reel box
+//   lockBtn     — small bar below nudgeDown
+//   centerHit   — invisible hit-zone inside container for lock-toggle on click
 // ─────────────────────────────────────────────────────────────────────────────
 interface ReelView extends ReelViewRef {
-  container:   Container;
-  aboveText:   Text;
-  centerText:  Text;
-  belowText:   Text;
-  lockOverlay: Graphics;
-  lockLabel:   Text;
+  slot:         Container;
+  container:    Container;
+  aboveText:    Text;
+  centerText:   Text;
+  belowText:    Text;
+  lockOverlay:  Graphics;
+  lockLabel:    Text;        // kept for interface compat, always hidden
+  nudgeUp:      Container;
+  nudgeDown:    Container;
+  lockBtn:      Container;
+  lockBtnBg:    Graphics;
+  lockBtnLabel: Text;
+  centerHit:    Container;
 }
 
 function createReelView(): ReelView {
+  const CX = REEL_WIDTH / 2; // 36
+  const HW = 14;              // triangle half-width
+
+  // ── Slot (outer wrapper) ────────────────────────────────────────────────────
+  const slot = new Container();
+
+  // ── Nudge UP triangle (above reel, y=0 in slot) ─────────────────────────────
+  const nudgeUp = new Container();
+  nudgeUp.y         = 0;
+  nudgeUp.eventMode = "static";
+  nudgeUp.cursor    = "pointer";
+  nudgeUp.hitArea   = new Rectangle(CX - HW, 0, HW * 2, NUDGE_H);
+  const nudgeUpGfx  = new Graphics();
+  nudgeUpGfx.poly([CX, 2, CX + HW, NUDGE_H - 2, CX - HW, NUDGE_H - 2]);
+  nudgeUpGfx.fill({ color: 0x3366cc });
+  nudgeUp.addChild(nudgeUpGfx);
+  nudgeUp.on("pointerover", () => { nudgeUpGfx.tint = 0xaaddff; });
+  nudgeUp.on("pointerout",  () => { nudgeUpGfx.tint = 0xffffff; });
+  slot.addChild(nudgeUp);
+
+  // ── Reel box (animated by ReelAnimator, y=CTRL_ABOVE in slot) ───────────────
   const container = new Container();
+  container.y = CTRL_ABOVE; // 21
 
   const bg = new Graphics();
   bg.roundRect(0, 0, REEL_WIDTH, REEL_HEIGHT, 6);
   bg.fill({ color: 0x22223a });
   bg.stroke({ color: 0x4a4a7a, width: 2 });
+  bg.eventMode = "none";
   container.addChild(bg);
 
   const aboveText = new Text({ text: "0", style: SIDE_STYLE });
   aboveText.anchor.set(0.5);
-  aboveText.x = REEL_WIDTH / 2; aboveText.y = 30; aboveText.alpha = 0.4;
+  aboveText.x = CX; aboveText.y = 30; aboveText.alpha = 0.4;
   container.addChild(aboveText);
 
   const centerText = new Text({ text: "0", style: CENTER_STYLE });
   centerText.anchor.set(0.5);
-  centerText.x = REEL_WIDTH / 2; centerText.y = REEL_HEIGHT / 2;
+  centerText.x = CX; centerText.y = REEL_HEIGHT / 2;
   container.addChild(centerText);
 
   const belowText = new Text({ text: "0", style: SIDE_STYLE });
   belowText.anchor.set(0.5);
-  belowText.x = REEL_WIDTH / 2; belowText.y = REEL_HEIGHT - 30; belowText.alpha = 0.4;
+  belowText.x = CX; belowText.y = REEL_HEIGHT - 30; belowText.alpha = 0.4;
   container.addChild(belowText);
 
   const lockOverlay = new Graphics();
   lockOverlay.roundRect(1, 1, REEL_WIDTH - 2, REEL_HEIGHT - 2, 5);
   lockOverlay.fill({ color: 0xffaa00, alpha: 0.18 });
   lockOverlay.stroke({ color: 0xffaa00, width: 2 });
-  lockOverlay.visible = false;
+  lockOverlay.visible   = false;
+  lockOverlay.eventMode = "none";
   container.addChild(lockOverlay);
 
+  // lockLabel: kept in interface for compat, always invisible (replaced by lockBtn)
   const lockLabel = new Text({ text: "LOCK", style: LOCK_LABEL_STYLE });
   lockLabel.anchor.set(0.5);
-  lockLabel.x = REEL_WIDTH / 2; lockLabel.y = REEL_HEIGHT - 12;
+  lockLabel.x = CX; lockLabel.y = REEL_HEIGHT - 12;
   lockLabel.visible = false;
   container.addChild(lockLabel);
 
-  return { container, aboveText, centerText, belowText, lockOverlay, lockLabel };
+  // centerHit: invisible hit zone over center digit for lock-toggle click
+  const centerHit  = new Container();
+  centerHit.eventMode = "none"; // enabled by syncReelControls when idle
+  centerHit.cursor    = "pointer";
+  centerHit.hitArea   = new Rectangle(0, REEL_HEIGHT / 2 - 32, REEL_WIDTH, 64);
+  container.addChild(centerHit);
+
+  slot.addChild(container);
+
+  // ── Nudge DOWN triangle (below reel box) ────────────────────────────────────
+  const nudgeDwnY  = CTRL_ABOVE + REEL_HEIGHT + NUDGE_GAP; // 184
+  const nudgeDown  = new Container();
+  nudgeDown.y         = nudgeDwnY;
+  nudgeDown.eventMode = "static";
+  nudgeDown.cursor    = "pointer";
+  nudgeDown.hitArea   = new Rectangle(CX - HW, 0, HW * 2, NUDGE_H);
+  const nudgeDwnGfx   = new Graphics();
+  nudgeDwnGfx.poly([CX, NUDGE_H - 2, CX + HW, 2, CX - HW, 2]);
+  nudgeDwnGfx.fill({ color: 0x3366cc });
+  nudgeDown.addChild(nudgeDwnGfx);
+  nudgeDown.on("pointerover", () => { nudgeDwnGfx.tint = 0xaaddff; });
+  nudgeDown.on("pointerout",  () => { nudgeDwnGfx.tint = 0xffffff; });
+  slot.addChild(nudgeDown);
+
+  // ── Lock button (below nudgeDown) ───────────────────────────────────────────
+  const lockBtnY = nudgeDwnY + NUDGE_H + 3; // 205
+  const lockBtn  = new Container();
+  lockBtn.y         = lockBtnY;
+  lockBtn.eventMode = "static";
+  lockBtn.cursor    = "pointer";
+  lockBtn.hitArea   = new Rectangle(0, 0, REEL_WIDTH, LOCK_H);
+
+  const lockBtnBg = new Graphics();
+  lockBtnBg.roundRect(0, 0, REEL_WIDTH, LOCK_H, 3);
+  lockBtnBg.fill({ color: 0x1e1e30 });
+  lockBtnBg.stroke({ color: 0x404060, width: 1 });
+  lockBtn.addChild(lockBtnBg);
+
+  const lockBtnLabel = new Text({ text: "LOCK", style: LOCK_BTN_OFF_STYLE });
+  lockBtnLabel.anchor.set(0.5, 0.5);
+  lockBtnLabel.x = CX;
+  lockBtnLabel.y = LOCK_H / 2;
+  lockBtn.addChild(lockBtnLabel);
+
+  lockBtn.on("pointerover", () => { lockBtnBg.tint = 0xbbbbff; });
+  lockBtn.on("pointerout",  () => { lockBtnBg.tint = 0xffffff; });
+  slot.addChild(lockBtn);
+
+  return {
+    slot, container,
+    aboveText, centerText, belowText,
+    lockOverlay, lockLabel,
+    nudgeUp, nudgeDown,
+    lockBtn, lockBtnBg, lockBtnLabel,
+    centerHit,
+  };
 }
 
 function updateReelView(view: ReelView, digits: VisibleDigits): void {
@@ -122,7 +230,26 @@ function updateReelView(view: ReelView, digits: VisibleDigits): void {
 
 function updateLockOverlay(view: ReelView, locked: boolean): void {
   view.lockOverlay.visible = locked;
-  view.lockLabel.visible   = locked;
+  // Update lock button appearance
+  view.lockBtnBg.clear();
+  view.lockBtnBg.roundRect(0, 0, REEL_WIDTH, LOCK_H, 3);
+  if (locked) {
+    view.lockBtnBg.fill({ color: 0x3a2200 });
+    view.lockBtnBg.stroke({ color: 0xffaa00, width: 1 });
+    view.lockBtnLabel.text  = "UNLOCK";
+    view.lockBtnLabel.style = LOCK_BTN_ON_STYLE;
+  } else {
+    view.lockBtnBg.fill({ color: 0x1e1e30 });
+    view.lockBtnBg.stroke({ color: 0x404060, width: 1 });
+    view.lockBtnLabel.text  = "LOCK";
+    view.lockBtnLabel.style = LOCK_BTN_OFF_STYLE;
+  }
+}
+
+// Disable/enable a control button with alpha + eventMode.
+function setCtrlDisabled(c: Container, disabled: boolean): void {
+  c.alpha     = disabled ? 0.30 : 1.0;
+  c.eventMode = disabled ? "none" : "static";
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -139,33 +266,22 @@ async function main() {
 
   // ══════════════════════════════════════════════════════════════════════════
   // GAME ROOT
-  // Single movable anchor on stage. layout() only adjusts gameRoot.x/y.
-  // All children use fixed local coordinates — overlap is structurally
-  // impossible without changing the constants above.
   //
   // Z-ORDER within gameRoot:
-  //   index 0 — cardsBlock  (behind, must not intercept topBlock events)
-  //   index 1 — topBlock    (in front, always receives events first)
-  //
-  // PixiJS tests hits from highest index (front) to lowest (back), so
-  // topBlock always wins before cardsBlock is ever tested.
+  //   index 0 — cardsBlock  (behind — never intercepts topBlock events)
+  //   index 1 — topBlock    (in front — hit-tested first by Pixi)
   // ══════════════════════════════════════════════════════════════════════════
   const gameRoot = new Container();
   app.stage.addChild(gameRoot);
 
-  // ── cardsBlock — added FIRST (index 0 = behind topBlock) ──────────────────
-  // CARDS_TOP = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP = 218 + 88 + 16 = 322
-  const CARDS_TOP = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP;
+  // ── cardsBlock — index 0 (behind) ─────────────────────────────────────────
+  const CARDS_TOP = PANEL_TOP + RunPanel.PANEL_H + BLOCK_GAP; // 277 + 88 + 16 = 381
 
   const cardsBlock = new Container();
-  cardsBlock.y = CARDS_TOP;
-  // "passive": the container itself has no hit area of its own, only its
-  // explicitly interactive children (individual card containers) are tested.
+  cardsBlock.y         = CARDS_TOP;
   cardsBlock.eventMode = "passive";
-  gameRoot.addChild(cardsBlock); // index 0 — rendered behind topBlock
+  gameRoot.addChild(cardsBlock);
 
-  // Clip mask — prevents cards from rendering or receiving events outside
-  // their designated rectangle.
   const cardsMask = new Graphics();
   cardsMask.rect(0, 0, CardGrid.GRID_W, CardGrid.TOTAL_H);
   cardsMask.fill(0xffffff);
@@ -175,40 +291,46 @@ async function main() {
   const cardGrid = new CardGrid((cardId) => handleClaim(cardId));
   cardsBlock.addChild(cardGrid);
 
-  // ── topBlock — added SECOND (index 1 = in front of cardsBlock) ────────────
+  // ── topBlock — index 1 (in front, hit-tested first) ───────────────────────
   const topBlock = new Container();
-  gameRoot.addChild(topBlock); // index 1 — rendered in front, hit-tested first
+  gameRoot.addChild(topBlock);
 
-  // Title — bottom-anchored, text sits above REEL_TOP
+  // Title — bottom-anchored, sits 4 px above the first nudge button row
   const title = new Text({
     text: "TAPE RUN SLOT",
     style: new TextStyle({ fontFamily: "monospace", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
   });
   title.anchor.set(0.5, 1);
   title.x = Math.round(UI_W / 2);
-  title.y = REEL_TOP - 6; // bottom of text is 6 px above reel box
+  title.y = REEL_SLOT_Y - 4; // 38  — bottom of text, 4 px gap to slot top
   topBlock.addChild(title);
 
-  // Reels — centred horizontally within UI_W
+  // Reels container — holds one slot per reel
   const reelsContainer = new Container();
   reelsContainer.x = Math.round((UI_W - REEL_AREA_WIDTH) / 2);
-  reelsContainer.y = REEL_TOP;
+  reelsContainer.y = REEL_SLOT_Y; // 42
   topBlock.addChild(reelsContainer);
 
   const reelViews: ReelView[] = [];
   for (let i = 0; i < REEL_COUNT; i++) {
-    const rv = createReelView();
-    rv.container.x = i * (REEL_WIDTH + REEL_GAP);
-    reelsContainer.addChild(rv.container);
+    const rv  = createReelView();
+    rv.slot.x = i * (REEL_WIDTH + REEL_GAP);
+    reelsContainer.addChild(rv.slot); // add the SLOT, not the inner container
     reelViews.push(rv);
+
+    // Capture index for event closures (function declarations are hoisted,
+    // so doNudge / doToggleLock are accessible here even though declared later).
+    const idx = i;
+    rv.nudgeUp.on("pointerdown",   (e: FederatedPointerEvent) => { e.stopPropagation(); doNudge(idx, -1); });
+    rv.nudgeDown.on("pointerdown", (e: FederatedPointerEvent) => { e.stopPropagation(); doNudge(idx, +1); });
+    rv.lockBtn.on("pointerdown",   (e: FederatedPointerEvent) => { e.stopPropagation(); doToggleLock(idx); });
+    rv.centerHit.on("pointerdown", (e: FederatedPointerEvent) => { e.stopPropagation(); doToggleLock(idx); });
   }
 
-  // RunPanel — HUD + SPIN button; shown during all run states, hidden in betting
-  // y = PANEL_TOP so it always starts immediately below the reel block.
+  // ── RunPanel + BetPanel ────────────────────────────────────────────────────
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
 
-  // Shared spin handler — used by both RunPanel and DevPanel (inside DevDrawer)
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
@@ -224,7 +346,6 @@ async function main() {
   runPanel.y = PANEL_TOP;
   topBlock.addChild(runPanel);
 
-  // BetPanel — shown only in betting state, same vertical slot as runPanel
   const betPanelContainer = new Container();
   betPanelContainer.y = PANEL_TOP;
   topBlock.addChild(betPanelContainer);
@@ -232,7 +353,7 @@ async function main() {
   const betPanel = new BetPanel(economy, run, () => handleStartRun());
   betPanelContainer.addChild(betPanel);
 
-  // ── DevDrawer — stage-level bottom overlay (not part of layout blocks) ────
+  // ── DevDrawer ─────────────────────────────────────────────────────────────
   const devDrawer = new DevDrawer(
     model, fsm, run,
     app.ticker,
@@ -244,38 +365,79 @@ async function main() {
     },
     doSpin,
   );
+  // Reel selector + per-reel nudge buttons in DevPanel are superseded by the
+  // on-reel triangle controls; hide them to avoid duplicates.
+  devDrawer.devPanel.hideNudgeSection();
 
-  // ── End overlay — stage-level, floats above the reel area ─────────────────
-  // buildEndOverlay is a function *declaration* (hoisted) so it can be called
-  // here even though its source text appears later in main().
-  // Declaring endOverlay as a const here (before applyVisibility is ever called)
-  // eliminates the TDZ that caused the original ReferenceError.
+  // ── End overlay ─────────────────────────────────────────────────────────────
   const endOverlayData = buildEndOverlay();
   const endOverlay     = endOverlayData.container;
   endOverlay.visible   = false;
   app.stage.addChild(endOverlay);
 
-  // DevDrawer is the topmost stage element so its handle is always hittable
-  app.stage.addChild(devDrawer.container);
+  app.stage.addChild(devDrawer.container); // topmost — handle always hittable
 
-  // ── Visibility ────────────────────────────────────────────────────────────
+  // ── Visibility ──────────────────────────────────────────────────────────────
   function applyVisibility(state: GameState): void {
     const betting = state === "betting";
     const inRun   = !betting;
 
-    // topBlock children
     title.visible             = inRun;
     runPanel.visible          = inRun;
     betPanelContainer.visible = betting;
 
-    // cardsBlock — visible only during run
-    cardsBlock.visible     = inRun;
-    endOverlay.visible     = state === "ended";
+    cardsBlock.visible = inRun;
+    endOverlay.visible = state === "ended";
 
     if (state === "ended") refreshEndOverlay();
   }
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // ── Per-reel action handlers ────────────────────────────────────────────────
+
+  function doNudge(reelIdx: number, direction: -1 | 1): void {
+    if (fsm.state !== "idle") return;
+    const cost = run.getNudgeCost();
+    if (!run.canSpend(cost)) return;
+    run.spend(cost);
+    run.recordNudge();
+    model.reels[reelIdx].nudge(direction);
+    refreshAllReels();
+    devDrawer.devPanel.refreshInfo();
+    if (run.actions === 0) fsm.transition("ended");
+  }
+
+  function doToggleLock(reelIdx: number): void {
+    if (fsm.state !== "idle") return;
+    model.toggleLocked(reelIdx);
+    updateLockOverlay(reelViews[reelIdx], model.isLocked(reelIdx));
+    devDrawer.devPanel.refreshInfo();
+    // Re-sync to reflect any state change (e.g. if locking affects UI elsewhere)
+    syncReelControls(fsm.state);
+  }
+
+  /**
+   * Enable or disable per-reel nudge/lock controls based on game state.
+   * Called whenever state transitions or actions count changes.
+   *
+   * Rules:
+   *   nudge: only in "idle" AND actions >= nudge cost
+   *   lock:  only in "idle"
+   */
+  function syncReelControls(state: GameState): void {
+    const nudgeCost = run.getNudgeCost();
+    const canNudge  = state === "idle" && run.canSpend(nudgeCost);
+    const canLock   = state === "idle";
+
+    for (const rv of reelViews) {
+      setCtrlDisabled(rv.nudgeUp,   !canNudge);
+      setCtrlDisabled(rv.nudgeDown, !canNudge);
+      setCtrlDisabled(rv.lockBtn,   !canLock);
+      rv.centerHit.eventMode = canLock ? "static" : "none";
+    }
+  }
+
+  // ── Game handlers ───────────────────────────────────────────────────────────
+
   function handleStartRun(): void {
     if (fsm.state !== "betting") return;
 
@@ -320,15 +482,17 @@ async function main() {
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     runPanel.refresh(economy.totalWin, cards.claimedIds.size);
     devDrawer.devPanel.refreshInfo();
+    syncReelControls(fsm.state); // actions may have changed (tier 2+ bonus)
 
     if (fsm.state === "ended") refreshEndOverlay();
   }
 
-  // ── FSM listener ──────────────────────────────────────────────────────────
+  // ── FSM listener ─────────────────────────────────────────────────────────────
   fsm.onChange((_, next) => {
     devDrawer.devPanel.syncState(next);
     devDrawer.devPanel.refreshInfo();
     runPanel.syncState(next);
+    syncReelControls(next);
 
     const animating = next === "running" || next === "resolve";
     cardGrid.setSpin(animating);
@@ -337,7 +501,7 @@ async function main() {
     applyVisibility(next);
   });
 
-  // ── Refresh helpers ────────────────────────────────────────────────────────
+  // ── Refresh helpers ──────────────────────────────────────────────────────────
   function refreshAllReels(): void {
     for (let i = 0; i < REEL_COUNT; i++) {
       updateReelView(reelViews[i], model.reels[i].getVisible());
@@ -348,9 +512,10 @@ async function main() {
     cardGrid.updateCards(cards.readyIds, cards.claimedIds);
     cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
     runPanel.refresh(economy.totalWin, cards.claimedIds.size);
+    syncReelControls(fsm.state); // keeps nudge disable in sync with actions count
   }
 
-  // ── End overlay ───────────────────────────────────────────────────────────
+  // ── End overlay (function declaration — hoisted, called above) ──────────────
   interface EndOverlay {
     container:  Container;
     winText:    Text;
@@ -386,7 +551,7 @@ async function main() {
     c.addChild(profitText);
 
     const btnW = 220, btnH = 32;
-    const btn = new Container();
+    const btn  = new Container();
     btn.eventMode = "static"; btn.cursor = "pointer";
     const bBg = new Graphics();
     bBg.roundRect(0, 0, btnW, btnH, 5);
@@ -414,26 +579,22 @@ async function main() {
     endOverlayData.profitText.style = p >= 0 ? END_PROFIT_POS : END_PROFIT_NEG;
   }
 
-  // ── Layout ────────────────────────────────────────────────────────────────
-  // Only gameRoot.x needs to change on resize — all children use fixed local
-  // coordinates, so nothing inside can shift relative to one another.
+  // ── Layout ──────────────────────────────────────────────────────────────────
   function layout(): void {
     const w = app.screen.width;
     const h = app.screen.height;
 
-    // Centre the entire content column on the screen
     gameRoot.x = Math.round((w - UI_W) / 2);
     gameRoot.y = PAD_TOP;
 
-    // End overlay: horizontally centred; vertically aligned with reel top
+    // End overlay: centred horizontally, aligned with top of reel box
     endOverlay.x = Math.round((w - 340) / 2);
-    endOverlay.y = PAD_TOP + REEL_TOP; // absolute reel top = 16 + 44 = 60
+    endOverlay.y = PAD_TOP + REEL_SLOT_Y + CTRL_ABOVE; // absolute top of reel box
 
-    // DevDrawer: pinned to screen bottom
     devDrawer.resize(w, h);
   }
 
-  // ── Boot ──────────────────────────────────────────────────────────────────
+  // ── Boot ────────────────────────────────────────────────────────────────────
   refreshAllReels();
   devDrawer.devPanel.refreshInfo();
   devDrawer.devPanel.syncState(fsm.state);
@@ -441,6 +602,7 @@ async function main() {
   cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
 
   applyVisibility(fsm.state); // starts in "betting"
+  syncReelControls(fsm.state);
 
   layout();
   window.addEventListener("resize", layout);

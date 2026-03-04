@@ -118,6 +118,12 @@ export class DevPanel extends Container {
   /** Stateful lock-toggle buttons — one per reel. */
   private lockBtns: LockToggleBtn[] = [];
 
+  /**
+   * Container wrapping the reel-selector row and nudge-up/down buttons.
+   * Hidden via hideNudgeSection() now that per-reel triangle controls exist.
+   */
+  private nudgeSection!: Container;
+
   constructor(
     model: TapeSlotModel,
     fsm: GameStateMachine,
@@ -320,21 +326,35 @@ export class DevPanel extends Container {
     this.addChild(Object.assign(new Text({ text: "(Seed ±1/+10 to change)", style: HINT_STYLE }), { x: X + 345, y: y + 6 }));
     y += 36;
 
-    // ── Row: reel controls ─────────────────────────────────────────────────────
-    this.addChild(Object.assign(new Text({ text: "Reel:", style: LABEL_STYLE }), { x: X, y: y + 4 }));
-    this.selectedReelText = Object.assign(new Text({ text: "1", style: VALUE_STYLE }), { x: X + 50, y: y + 4 });
-    this.addChild(this.selectedReelText);
+    // ── Row: reel controls (wrapped so hideNudgeSection() can hide them) ─────────
+    // These controls are superseded by per-reel triangle + lock buttons on the
+    // main UI; the section is hidden on startup but kept here as a debug fallback.
+    this.nudgeSection   = new Container();
+    this.nudgeSection.y = y;
+    this.addChild(this.nudgeSection);
 
-    const bPrev = this.regGame(makeButton("<", 28, 26, () => { this.selectedReel = (this.selectedReel + 6) % 7; this.refreshInfo(); }));
-    bPrev.x = X + 72; bPrev.y = y;
-    const bNext = this.regGame(makeButton(">", 28, 26, () => { this.selectedReel = (this.selectedReel + 1) % 7; this.refreshInfo(); }));
-    bNext.x = X + 106; bNext.y = y;
+    // Local helper: register in lockableButtons but add to nudgeSection not to this.
+    const regNudge = (btn: Container): Container => {
+      this.lockableButtons.push(btn);
+      this.nudgeSection.addChild(btn);
+      return btn;
+    };
+
+    const reelLbl = Object.assign(new Text({ text: "Reel:", style: LABEL_STYLE }), { x: X, y: 4 });
+    this.nudgeSection.addChild(reelLbl);
+    this.selectedReelText = Object.assign(new Text({ text: "1", style: VALUE_STYLE }), { x: X + 50, y: 4 });
+    this.nudgeSection.addChild(this.selectedReelText);
+
+    const bPrev = regNudge(makeButton("<", 28, 26, () => { this.selectedReel = (this.selectedReel + 6) % 7; this.refreshInfo(); }));
+    bPrev.x = X + 72; bPrev.y = 0;
+    const bNext = regNudge(makeButton(">", 28, 26, () => { this.selectedReel = (this.selectedReel + 1) % 7; this.refreshInfo(); }));
+    bNext.x = X + 106; bNext.y = 0;
 
     // Nudge buttons: use doNudge which handles RunController economy.
-    const bNudgeUp   = this.regGame(makeButton("Nudge Up",   86, 26, () => this.doNudge(-1)));
-    bNudgeUp.x = X + 150; bNudgeUp.y = y;
-    const bNudgeDown = this.regGame(makeButton("Nudge Down", 100, 26, () => this.doNudge(+1)));
-    bNudgeDown.x = X + 244; bNudgeDown.y = y;
+    const bNudgeUp   = regNudge(makeButton("Nudge Up",   86, 26, () => this.doNudge(-1)));
+    bNudgeUp.x = X + 150; bNudgeUp.y = 0;
+    const bNudgeDown = regNudge(makeButton("Nudge Down", 100, 26, () => this.doNudge(+1)));
+    bNudgeDown.x = X + 244; bNudgeDown.y = 0;
     y += 36;
 
     // ── Row: utility + SPIN ────────────────────────────────────────────────────
@@ -357,6 +377,15 @@ export class DevPanel extends Container {
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Hide the reel-selector + nudge-up/down row.
+   * Called from main.ts after DevDrawer creation, because per-reel triangle
+   * buttons on the main UI now provide the same functionality.
+   */
+  hideNudgeSection(): void {
+    this.nudgeSection.visible = false;
+  }
 
   /**
    * Synchronise button enable/disable state with the FSM state.
