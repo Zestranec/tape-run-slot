@@ -111,7 +111,7 @@ export class RulesScreen extends Container {
     this._panel.addChild(panelBg);
 
     // ── Title ─────────────────────────────────────────────────────────────────
-    const title = new Text({ text: "TAPE RUN SLOT", style: TITLE_STYLE });
+    const title = new Text({ text: "PUZZLE SLOT", style: TITLE_STYLE });
     title.anchor.set(0.5, 0);
     title.x = PANEL_W / 2;
     title.y = PAD;

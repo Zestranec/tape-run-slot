@@ -395,7 +395,7 @@ async function main() {
 
   // Title — bottom-anchored, sits 4 px above the first nudge button row
   const title = new Text({
-    text: "TAPE RUN SLOT",
+    text: "PUZZLE SLOT",
     style: new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
   });
   title.anchor.set(0.5, 1);
