@@ -14,6 +14,7 @@ import { DevDrawer } from "./ui/DevDrawer";
 import { RunPanel } from "./ui/RunPanel";
 import { CardGrid } from "./ui/CardGrid";
 import { BetPanel } from "./ui/BetPanel";
+import { ToastMessage } from "./ui/ToastMessage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VISUAL CONSTANTS
@@ -288,7 +289,7 @@ async function main() {
   cardsBlock.addChild(cardsMask);
   cardsBlock.mask = cardsMask;
 
-  const cardGrid = new CardGrid((cardId) => handleClaim(cardId));
+  const cardGrid = new CardGrid((cardId) => handleCardClick(cardId));
   cardsBlock.addChild(cardGrid);
 
   // ── topBlock — index 1 (in front, hit-tested first) ───────────────────────
@@ -335,9 +336,22 @@ async function main() {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
     spinController.requestSpin(() => {
+      // Evaluate ALL unclaimed cards against the new digits.
+      const digits = model.getVisibleCenterDigits();
+      cards.onSpinResolved(digits);
+
       refreshAllReels();
       devDrawer.devPanel.refreshInfo();
       if (spinController.lastSpin) devDrawer.devPanel.showLastSpin(spinController.lastSpin.deltas);
+
+      // Gate: if any cards are available the player must claim one before spinning.
+      if (cards.hasAvailable()) {
+        runPanel.setSpinBlocked(true);
+        toast.show("CHOOSE ONE CARD", { duration: 60_000 }); // persistent until replaced
+      } else {
+        runPanel.setSpinBlocked(false);
+      }
+
       if (run.actions === 0) fsm.transition("ended");
     });
   }
@@ -352,6 +366,14 @@ async function main() {
 
   const betPanel = new BetPanel(economy, run, () => handleStartRun());
   betPanelContainer.addChild(betPanel);
+
+  // ── Toast — non-interactive message layer above the cards grid ────────────
+  // Z-index 2 (after cardsBlock=0, topBlock=1): renders on top but never
+  // intercepts clicks because container.eventMode = "none".
+  const toast = new ToastMessage(app.ticker);
+  toast.container.x = Math.round(UI_W / 2); // horizontally centred over the grid
+  toast.container.y = CARDS_TOP - 20;        // just above the cards grid
+  gameRoot.addChild(toast.container);
 
   // ── DevDrawer ─────────────────────────────────────────────────────────────
   const devDrawer = new DevDrawer(
@@ -386,7 +408,8 @@ async function main() {
     runPanel.visible          = inRun;
     betPanelContainer.visible = betting;
 
-    cardsBlock.visible = inRun;
+    cardsBlock.visible        = inRun;
+    if (betting) toast.container.visible = false; // cancel any mid-animation toast
     endOverlay.visible = state === "ended";
 
     if (state === "ended") refreshEndOverlay();
@@ -445,6 +468,7 @@ async function main() {
     run.resetRun();
     economy.resetRun();
     cards.resetRun();
+    runPanel.setSpinBlocked(false); // clear any leftover block from a previous run
     model.resetOffsets();
     model.resetLocks();
     spinController.reset();
@@ -455,6 +479,8 @@ async function main() {
 
     refreshAllReels();
     devDrawer.devPanel.refreshInfo();
+    // Auto-spin at run start — first spin happens immediately.
+    doSpin();
   }
 
   function handleReturnToBetting(): void {
@@ -463,12 +489,27 @@ async function main() {
     betPanel.refresh();
   }
 
-  function handleClaim(cardId: string): void {
+  // ── Card helpers ────────────────────────────────────────────────────────────
+
+  /** Centralised card-grid refresh. Passes current available/claimed sets. */
+  function refreshAllCards(): void {
+    cardGrid.updateCards(cards.availableIds, cards.claimedIds);
+    cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
+    runPanel.refresh(economy.totalWin, cards.claimedIds.size);
+  }
+
+  /**
+   * Card click handler — claim-only path.
+   *
+   * Only AVAILABLE (green) cards are actionable; CardGrid already blocks clicks
+   * on non-available cards, but we double-check here for safety.
+   */
+  function handleCardClick(cardId: string): void {
     const s = fsm.state;
-    if (s !== "idle" && s !== "ended") return;
+    if (s === "running" || s === "resolve" || s === "betting") return;
     if (!cards.canClaim(cardId)) return;
 
-    const { payoutMult, tier } = cards.claim(cardId);
+    const { payoutMult, tier } = cards.claimOne(cardId);
     economy.addWin(payoutMult);
 
     if (tier >= 2) {
@@ -476,13 +517,21 @@ async function main() {
       if (s === "ended" && run.actions > 0) fsm.transition("idle");
     }
 
-    const digits = model.getVisibleCenterDigits();
-    cards.updateReady(digits);
-    cardGrid.updateCards(cards.readyIds, cards.claimedIds);
-    cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
-    runPanel.refresh(economy.totalWin, cards.claimedIds.size);
+    // Update all cards (claimed card will be dim; all others lose "available").
+    refreshAllCards();
+    // Brief green flash on the just-claimed card.
+    cardGrid.flashClaimAnimation(cardId);
+
+    // Clear all reel locks so the next spin starts fresh.
+    model.resetLocks();
+    for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+
+    // Clear the card-gate and re-enable SPIN.
+    runPanel.setSpinBlocked(false);
+    toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
+
     devDrawer.devPanel.refreshInfo();
-    syncReelControls(fsm.state); // actions may have changed (tier 2+ bonus)
+    syncReelControls(fsm.state);
 
     if (fsm.state === "ended") refreshEndOverlay();
   }
@@ -507,12 +556,9 @@ async function main() {
       updateReelView(reelViews[i], model.reels[i].getVisible());
       updateLockOverlay(reelViews[i], model.isLocked(i));
     }
-    const digits = model.getVisibleCenterDigits();
-    cards.updateReady(digits);
-    cardGrid.updateCards(cards.readyIds, cards.claimedIds);
-    cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
-    runPanel.refresh(economy.totalWin, cards.claimedIds.size);
-    syncReelControls(fsm.state); // keeps nudge disable in sync with actions count
+    // Card availability is computed in doSpin's onSpinResolved callback — not here.
+    refreshAllCards();
+    syncReelControls(fsm.state); // keeps nudge enable in sync with actions count
   }
 
   // ── End overlay (function declaration — hoisted, called above) ──────────────
@@ -599,7 +645,6 @@ async function main() {
   devDrawer.devPanel.refreshInfo();
   devDrawer.devPanel.syncState(fsm.state);
   runPanel.syncState(fsm.state);
-  cardGrid.updateSummary(economy.totalWin, cards.claimedIds.size, economy.baseBet);
 
   applyVisibility(fsm.state); // starts in "betting"
   syncReelControls(fsm.state);

@@ -61,6 +61,12 @@ export class RunPanel extends Container {
   private spinBtn!:     Container;
   private spinBg!:      Graphics;
 
+  // Spin can be blocked by two independent sources:
+  //   1. FSM state is not "idle"  (animation, ended, betting)
+  //   2. Available cards exist — player must choose one before spinning
+  private _lastState:   GameState = "betting";
+  private _spinBlocked  = false;
+
   constructor(
     run: RunController,
     economy: EconomyController,
@@ -157,9 +163,28 @@ export class RunPanel extends Container {
                    ACT_OK;
   }
 
-  /** Enable / disable SPIN based on FSM state. Does NOT control panel visibility. */
+  /**
+   * Enable / disable SPIN based on FSM state.
+   * Does NOT control panel visibility.
+   * The button stays disabled if `_spinBlocked` is true even when state = "idle".
+   */
   syncState(state: GameState): void {
-    // SPIN is active only in idle; disabled during animation and ended.
-    setDisabled(this.spinBtn, state !== "idle");
+    this._lastState = state;
+    this._updateSpin();
+  }
+
+  /**
+   * Block or unblock the SPIN button independently of FSM state.
+   * Set to true when available cards exist (player must claim one first).
+   * Set to false after a claim clears the available set.
+   */
+  setSpinBlocked(blocked: boolean): void {
+    this._spinBlocked = blocked;
+    this._updateSpin();
+  }
+
+  private _updateSpin(): void {
+    const disabled = this._lastState !== "idle" || this._spinBlocked;
+    setDisabled(this.spinBtn, disabled);
   }
 }
