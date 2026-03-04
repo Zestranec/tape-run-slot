@@ -9,6 +9,9 @@ export class TapeSlotModel {
   private _seed: number;
   readonly tapeLength: number;
 
+  /** Per-reel lock state. Locked reels receive delta=0 on spin. */
+  private _locks: boolean[] = new Array(REEL_COUNT).fill(false);
+
   get seed(): number {
     return this._seed;
   }
@@ -26,6 +29,32 @@ export class TapeSlotModel {
     for (let i = 0; i < REEL_COUNT; i++) {
       this.reels.push(TapeReel.generate(rng, this.tapeLength));
     }
+    // Full rebuild resets locks — fresh tapes, fresh configuration.
+    this._locks = new Array(REEL_COUNT).fill(false);
+  }
+
+  // ── Lock state API ──────────────────────────────────────────────────────────
+
+  isLocked(i: number): boolean {
+    return this._locks[i] ?? false;
+  }
+
+  setLocked(i: number, value: boolean): void {
+    this._locks[i] = value;
+  }
+
+  toggleLocked(i: number): void {
+    this._locks[i] = !this._locks[i];
+  }
+
+  /** Returns a copy of the lock state array. */
+  getLockStates(): boolean[] {
+    return [...this._locks];
+  }
+
+  /** Reset all locks to false (does NOT touch offsets or tapes). */
+  resetLocks(): void {
+    this._locks = new Array(REEL_COUNT).fill(false);
   }
 
   /** Returns array of 7 center digits. */

@@ -2,31 +2,28 @@ import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import { GameStateMachine } from "./core/GameStateMachine";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
+import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
+import { SpinController } from "./game/SpinController";
 import { DevPanel } from "./ui/DevPanel";
 
-const REEL_WIDTH = 72;
+// ── Reel visual constants (must match ReelAnimator internals) ──────────────────
+const REEL_WIDTH  = 72;
 const REEL_HEIGHT = 160;
-const REEL_GAP = 10;
+const REEL_GAP    = 10;
 const REEL_AREA_WIDTH = REEL_COUNT * REEL_WIDTH + (REEL_COUNT - 1) * REEL_GAP;
 
-const CENTER_STYLE = new TextStyle({
-  fontFamily: "monospace",
-  fontSize: 54,
-  fill: 0xffffff,
-  fontWeight: "bold",
-});
+const CENTER_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
+const SIDE_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 30, fill: 0x888899 });
+const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
 
-const SIDE_STYLE = new TextStyle({
-  fontFamily: "monospace",
-  fontSize: 30,
-  fill: 0x888899,
-});
-
-interface ReelView {
+// ReelView satisfies the ReelViewRef interface exported by ReelAnimator, plus lock overlay refs.
+interface ReelView extends ReelViewRef {
   container: Container;
   aboveText: Text;
   centerText: Text;
   belowText: Text;
+  lockOverlay: Graphics;
+  lockLabel: Text;
 }
 
 function createReelView(): ReelView {
@@ -58,13 +55,33 @@ function createReelView(): ReelView {
   belowText.alpha = 0.4;
   container.addChild(belowText);
 
-  return { container, aboveText, centerText, belowText };
+  // ── Lock overlay — amber tinted rect + "LOCK" label, hidden when unlocked ──
+  const lockOverlay = new Graphics();
+  lockOverlay.roundRect(1, 1, REEL_WIDTH - 2, REEL_HEIGHT - 2, 5);
+  lockOverlay.fill({ color: 0xffaa00, alpha: 0.18 });
+  lockOverlay.stroke({ color: 0xffaa00, width: 2 });
+  lockOverlay.visible = false;
+  container.addChild(lockOverlay);
+
+  const lockLabel = new Text({ text: "LOCK", style: LOCK_LABEL_STYLE });
+  lockLabel.anchor.set(0.5);
+  lockLabel.x = REEL_WIDTH / 2;
+  lockLabel.y = REEL_HEIGHT - 12;
+  lockLabel.visible = false;
+  container.addChild(lockLabel);
+
+  return { container, aboveText, centerText, belowText, lockOverlay, lockLabel };
 }
 
 function updateReelView(view: ReelView, digits: VisibleDigits): void {
-  view.aboveText.text = String(digits.above);
+  view.aboveText.text  = String(digits.above);
   view.centerText.text = String(digits.center);
-  view.belowText.text = String(digits.below);
+  view.belowText.text  = String(digits.below);
+}
+
+function updateLockOverlay(view: ReelView, locked: boolean): void {
+  view.lockOverlay.visible = locked;
+  view.lockLabel.visible   = locked;
 }
 
 async function main() {
@@ -76,10 +93,10 @@ async function main() {
   });
   document.body.appendChild(app.canvas);
 
-  const fsm = new GameStateMachine();
+  const fsm   = new GameStateMachine();
   const model = new TapeSlotModel(42);
 
-  // --- Reels container ---
+  // ── Reel views ────────────────────────────────────────────────────────────
   const reelsContainer = new Container();
   app.stage.addChild(reelsContainer);
 
@@ -92,38 +109,62 @@ async function main() {
     reelViews.push(rv);
   }
 
-  // --- Title ---
+  // ── Title ─────────────────────────────────────────────────────────────────
   const title = new Text({
     text: "TAPE RUN SLOT",
-    style: new TextStyle({
-      fontFamily: "monospace",
-      fontSize: 28,
-      fill: 0xffcc00,
-      fontWeight: "bold",
-      letterSpacing: 4,
-    }),
+    style: new TextStyle({ fontFamily: "monospace", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
   });
   title.anchor.set(0.5, 1);
   app.stage.addChild(title);
 
-  // --- Dev Panel ---
-  const devPanel = new DevPanel(model, fsm, () => {
-    refreshAllReels();
-    devPanel.refreshInfo();
-  });
+  // ── Spin infrastructure ───────────────────────────────────────────────────
+  const animator       = new ReelAnimator(reelViews, model, app.ticker);
+  const spinController = new SpinController(model, fsm, animator);
+
+  // ── Dev panel ─────────────────────────────────────────────────────────────
+  const devPanel = new DevPanel(
+    model,
+    fsm,
+    // onAction: called after any instant (non-spin) DevPanel action
+    () => {
+      refreshAllReels();
+      devPanel.refreshInfo();
+    },
+    // onSeedRebuild: reset spin sequence + clear lock overlays (rebuild resets locks too)
+    () => {
+      spinController.reset();
+      devPanel.clearLastSpin();
+      for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+    },
+    // onSpin: kick off a spin
+    () => {
+      spinController.requestSpin(() => {
+        refreshAllReels();
+        devPanel.refreshInfo();
+        if (spinController.lastSpin) devPanel.showLastSpin(spinController.lastSpin.deltas);
+      });
+    }
+  );
   app.stage.addChild(devPanel);
 
+  // ── FSM lock listener — keeps DevPanel buttons in sync with animation state ─
+  fsm.onChange((_, next) => {
+    devPanel.setLocked(next !== "idle");
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
   function refreshAllReels(): void {
     for (let i = 0; i < REEL_COUNT; i++) {
       updateReelView(reelViews[i], model.reels[i].getVisible());
+      // Keep lock overlay in sync with model on every full refresh.
+      updateLockOverlay(reelViews[i], model.isLocked(i));
     }
   }
 
   function layout(): void {
     const w = app.screen.width;
-    const h = app.screen.height;
-
     const reelBlockTop = 60;
+
     reelsContainer.x = Math.round((w - REEL_AREA_WIDTH) / 2);
     reelsContainer.y = reelBlockTop;
 
@@ -137,13 +178,6 @@ async function main() {
   refreshAllReels();
   devPanel.refreshInfo();
   layout();
-
-  // Expose for verification/testing (dev only)
-  (window as unknown as { __TAPE_SLOT_DEBUG__?: { visible: () => string; offsets: () => string; seed: () => number } }).__TAPE_SLOT_DEBUG__ = {
-    visible: () => model.getVisibleString(),
-    offsets: () => model.getOffsets().join(", "),
-    seed: () => model.seed,
-  };
 
   window.addEventListener("resize", layout);
 }
