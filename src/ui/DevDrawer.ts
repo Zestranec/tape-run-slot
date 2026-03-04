@@ -20,7 +20,7 @@ const ANIM_MS     = 220;
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const HANDLE_LABEL_STYLE = new TextStyle({
-  fontFamily: "monospace",
+  fontFamily: "Arial, sans-serif",
   fontSize: 13,
   fill: 0xffcc00,
   fontWeight: "bold",

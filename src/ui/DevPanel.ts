@@ -5,18 +5,18 @@ import { RunController } from "../game/RunController";
 import { RNG } from "../core/RNG";
 
 // ── Shared text styles ─────────────────────────────────────────────────────────
-const LABEL_STYLE        = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xcccccc });
-const VALUE_STYLE        = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
-const BTN_STYLE          = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffffff });
-const HEADING_STYLE      = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0xffcc00, fontWeight: "bold" });
-const HINT_STYLE         = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0x888888 });
-const SPIN_DELTA_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0x88ff88 });
-const LOCKS_VALUE_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffaa00, fontWeight: "bold" });
-const ACTIONS_OK_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
-const ACTIONS_LOW_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xff6644, fontWeight: "bold" });
-const ACTIONS_ZERO_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xff2222, fontWeight: "bold" });
-const STATUS_OK_STYLE    = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0x44ff88 });
-const STATUS_END_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xff3333 });
+const LABEL_STYLE        = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xcccccc });
+const VALUE_STYLE        = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
+const BTN_STYLE          = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffffff });
+const HEADING_STYLE      = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0xffcc00, fontWeight: "bold" });
+const HINT_STYLE         = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0x888888 });
+const SPIN_DELTA_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0x88ff88 });
+const LOCKS_VALUE_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffaa00, fontWeight: "bold" });
+const ACTIONS_OK_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
+const ACTIONS_LOW_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xff6644, fontWeight: "bold" });
+const ACTIONS_ZERO_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xff2222, fontWeight: "bold" });
+const STATUS_OK_STYLE    = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0x44ff88 });
+const STATUS_END_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xff3333 });
 
 // ── Generic button factory ─────────────────────────────────────────────────────
 interface BtnColors { fill?: number; stroke?: number; hoverTint?: number; }

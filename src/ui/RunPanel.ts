@@ -20,13 +20,13 @@ const PANEL_H     = SPIN_BTN_H + 28; // 88 — tall enough to hold 2 HUD rows + 
 // ─────────────────────────────────────────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────────────────────────────────────────
-const HUD_LABEL = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0x9999bb });
-const HUD_VAL   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffffff, fontWeight: "bold" });
-const WIN_VAL   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffcc00, fontWeight: "bold" });
-const ACT_OK    = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0x44ff88, fontWeight: "bold" });
-const ACT_LOW   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xff9944, fontWeight: "bold" });
-const ACT_ZERO  = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xff2222, fontWeight: "bold" });
-const SPIN_TXT  = new TextStyle({ fontFamily: "monospace", fontSize: 22, fill: 0xffffff, fontWeight: "bold" });
+const HUD_LABEL = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0x9999bb });
+const HUD_VAL   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffffff, fontWeight: "bold" });
+const WIN_VAL   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffcc00, fontWeight: "bold" });
+const ACT_OK    = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0x44ff88, fontWeight: "bold" });
+const ACT_LOW   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xff9944, fontWeight: "bold" });
+const ACT_ZERO  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xff2222, fontWeight: "bold" });
+const SPIN_TXT  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 22, fill: 0xffffff, fontWeight: "bold" });
 
 // ─────────────────────────────────────────────────────────────────────────────
 

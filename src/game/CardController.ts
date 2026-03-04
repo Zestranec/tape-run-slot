@@ -70,22 +70,18 @@ export class CardController {
    */
   onSpinResolved(digits: number[]): void {
     this._claimedThisSpin = false;
-    this._available.clear();
-    this._almostAll.clear();
-    this._almostShown.clear();
+    this._evaluateDigits(digits);
+  }
 
-    for (const card of CARDS) {
-      if (this._claimed.has(card.id)) continue;
-
-      const { matched, distance } = evaluateCard(card, digits);
-      if (matched) {
-        this._available.add(card.id);
-      } else if (distance === 1) {
-        this._almostAll.add(card.id);
-      }
-    }
-
-    this._recomputeAlmostShown();
+  /**
+   * Re-evaluate card states against updated digits WITHOUT starting a new spin
+   * (e.g. after a nudge changes one reel's visible digit).
+   *
+   * Preserves `_claimedThisSpin` so the spin-gate is not disturbed.
+   * Use this whenever digits change outside of a spin resolution.
+   */
+  onDigitsChanged(digits: number[]): void {
+    this._evaluateDigits(digits);
   }
 
   // ── Claim / skip ──────────────────────────────────────────────────────────────
@@ -131,6 +127,30 @@ export class CardController {
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Core evaluation: populate `_available` and `_almostAll` from `digits`,
+   * then recompute the filtered `_almostShown` set.
+   * Shared by onSpinResolved and onDigitsChanged.
+   */
+  private _evaluateDigits(digits: number[]): void {
+    this._available.clear();
+    this._almostAll.clear();
+    this._almostShown.clear();
+
+    for (const card of CARDS) {
+      if (this._claimed.has(card.id)) continue;
+
+      const { matched, distance } = evaluateCard(card, digits);
+      if (matched) {
+        this._available.add(card.id);
+      } else if (distance === 1) {
+        this._almostAll.add(card.id);
+      }
+    }
+
+    this._recomputeAlmostShown();
+  }
 
   /**
    * Populate `_almostShown` from `_almostAll` using the tier-filtering rule.

@@ -14,12 +14,12 @@ const PANEL_H = 160;
 const X = 14;
 
 // ── Text styles ──────────────────────────────────────────────────────────────
-const HEADING_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 18, fill: 0xffcc00, fontWeight: "bold" });
-const LABEL_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xcccccc });
-const VALUE_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffffff, fontWeight: "bold" });
-const BTN_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffffff });
-const ANTE_ON_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffaa00, fontWeight: "bold" });
-const START_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 15, fill: 0xffffff, fontWeight: "bold" });
+const HEADING_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 18, fill: 0xffcc00, fontWeight: "bold" });
+const LABEL_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xcccccc });
+const VALUE_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffffff, fontWeight: "bold" });
+const BTN_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffffff });
+const ANTE_ON_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffaa00, fontWeight: "bold" });
+const START_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 15, fill: 0xffffff, fontWeight: "bold" });
 
 // ── Bet button data ──────────────────────────────────────────────────────────
 interface BetBtn {

@@ -18,6 +18,7 @@ import { CardGrid } from "./ui/CardGrid";
 import { BetPanel } from "./ui/BetPanel";
 import { ToastMessage } from "./ui/ToastMessage";
 import { LoadingScreen, loadAssets, logoUrl } from "./ui/LoadingScreen";
+import { RulesScreen, rulesAlreadySeen } from "./ui/RulesScreen";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VISUAL CONSTANTS
@@ -67,19 +68,19 @@ const PANEL_TOP   = REEL_SLOT_Y + REEL_SLOT_H + PANEL_GAP; // 42 + 221 + 14 = 27
 // ─────────────────────────────────────────────────────────────────────────────
 // TEXT STYLES
 // ─────────────────────────────────────────────────────────────────────────────
-const CENTER_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
-const SIDE_STYLE       = new TextStyle({ fontFamily: "monospace", fontSize: 30, fill: 0x888899 });
-const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
-const END_TITLE_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 20, fill: 0xff4444, fontWeight: "bold" });
-const END_STAT_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff });
-const END_PROFIT_POS   = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0x44ff88, fontWeight: "bold" });
-const END_PROFIT_NEG   = new TextStyle({ fontFamily: "monospace", fontSize: 16, fill: 0xff4444, fontWeight: "bold" });
-const END_BTN_STYLE    = new TextStyle({ fontFamily: "monospace", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
+const CENTER_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
+const SIDE_STYLE       = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 30, fill: 0x888899 });
+const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
+const END_TITLE_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 20, fill: 0xff4444, fontWeight: "bold" });
+const END_STAT_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff });
+const END_PROFIT_POS   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0x44ff88, fontWeight: "bold" });
+const END_PROFIT_NEG   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0xff4444, fontWeight: "bold" });
+const END_BTN_STYLE    = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff, fontWeight: "bold" });
 
 // Lock button text styles (pre-allocated, reused in updateLockOverlay)
-const LOCK_BTN_OFF_STYLE  = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0x6666aa });
-const LOCK_BTN_ON_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xffaa00, fontWeight: "bold" });
-const NEAR_MISS_LBL_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xff8800, fontWeight: "bold" });
+const LOCK_BTN_OFF_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fill: 0x6666aa });
+const LOCK_BTN_ON_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fill: 0xffaa00, fontWeight: "bold" });
+const NEAR_MISS_LBL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fill: 0xff8800, fontWeight: "bold" });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VIEW
@@ -285,14 +286,20 @@ function setCtrlDisabled(c: Container, disabled: boolean): void {
 // ═════════════════════════════════════════════════════════════════════════════
 async function main() {
   const app = new Application();
-  await app.init({ background: 0x12122a, resizeTo: window, antialias: true });
+  await app.init({
+    background:   0x000000,
+    resizeTo:     window,
+    antialias:    true,
+    resolution:   window.devicePixelRatio || 1,
+    autoDensity:  true,
+    roundPixels:  true,
+  });
   document.body.appendChild(app.canvas);
 
   // ── Loading screen ─────────────────────────────────────────────────────────
   const MIN_DURATION = 1500; // ms
   const startTs      = performance.now();
 
-  // Logo is fetched immediately via Sprite.from(); bar tracks other assets.
   const loading = new LoadingScreen(logoUrl());
   loading.layout(app.screen.width, app.screen.height);
   app.stage.addChild(loading);
@@ -300,22 +307,54 @@ async function main() {
   const resizeLoading = () => loading.layout(app.screen.width, app.screen.height);
   window.addEventListener("resize", resizeLoading);
 
-  const assetsPromise = loadAssets((p) => loading.setProgress(p));
-  const minWaitPromise = assetsPromise.then(() => {
-    const elapsed = performance.now() - startTs;
-    const remaining = Math.max(0, MIN_DURATION - elapsed);
-    return new Promise<void>((r) => setTimeout(r, remaining));
+  // Ticker drives all loader animations (bar lerp, glow pulse).
+  const loaderTick = () => loading.tick(app.ticker.deltaMS);
+  app.ticker.add(loaderTick);
+
+  // Real asset loading — reports progress 0..1 if there are actual assets.
+  // When there are none, the fake-cap easing drives the bar.
+  const assetsPromise = loadAssets((p) => loading.setRealProgress(p));
+
+  // Wait for BOTH: assets loaded AND minimum display duration elapsed.
+  await new Promise<void>((r) => {
+    assetsPromise.then(() => {
+      const remaining = Math.max(0, MIN_DURATION - (performance.now() - startTs));
+      setTimeout(r, remaining);
+    });
   });
 
-  await minWaitPromise;
+  // Signal loader: bar now animates smoothly to 100%.
+  loading.complete();
 
-  loading.setProgress(1);
-  // Brief pause so the player sees the full bar before it disappears.
-  await new Promise<void>((r) => setTimeout(r, 120));
+  // Wait until the bar visually reaches 100% (the lerp finishes).
+  await new Promise<void>((r) => {
+    const poll = () => loading.isDisplayDone ? r() : requestAnimationFrame(poll);
+    requestAnimationFrame(poll);
+  });
 
+  // Tear down loader.
+  app.ticker.remove(loaderTick);
   window.removeEventListener("resize", resizeLoading);
   app.stage.removeChild(loading);
+  loading.destroy({ children: true });
   // ── End loading screen ─────────────────────────────────────────────────────
+
+  // ── Rules screen ───────────────────────────────────────────────────────────
+  if (!rulesAlreadySeen()) {
+    const rules = new RulesScreen();
+    rules.layout(app.screen.width, app.screen.height);
+    app.stage.addChild(rules);
+
+    const onRulesResize = () => rules.layout(app.screen.width, app.screen.height);
+    window.addEventListener("resize", onRulesResize);
+
+    await new Promise<void>((r) => { rules.onPlay = r; });
+
+    window.removeEventListener("resize", onRulesResize);
+    app.stage.removeChild(rules);
+    rules.destroy({ children: true });
+  }
+  // ── End rules screen ───────────────────────────────────────────────────────
 
   const fsm     = new GameStateMachine();
   const model   = new TapeSlotModel(42);
@@ -357,7 +396,7 @@ async function main() {
   // Title — bottom-anchored, sits 4 px above the first nudge button row
   const title = new Text({
     text: "TAPE RUN SLOT",
-    style: new TextStyle({ fontFamily: "monospace", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
+    style: new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 28, fill: 0xffcc00, fontWeight: "bold", letterSpacing: 4 }),
   });
   title.anchor.set(0.5, 1);
   title.x = Math.round(UI_W / 2);
@@ -454,6 +493,13 @@ async function main() {
   const animator       = new ReelAnimator(reelViews, model, app.ticker);
   const spinController = new SpinController(model, fsm, run, animator);
 
+  /**
+   * True when the last spin drained actions to 0 but left claimable cards.
+   * The run must NOT end until the player claims one card (or the card is
+   * a tier-2+ card that restores an action, in which case the run continues).
+   */
+  let endAfterClaim = false;
+
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
@@ -474,7 +520,16 @@ async function main() {
       devDrawer.devPanel.refreshInfo();
       if (spinController.lastSpin) devDrawer.devPanel.showLastSpin(spinController.lastSpin.deltas);
 
-      if (cards.hasAvailable()) {
+      if (run.actions === 0) {
+        if (!cards.hasAvailable()) {
+          // No actions, no claimable cards — end immediately.
+          fsm.transition("ended");
+        } else {
+          // No actions, but there are claimable cards — let player claim first.
+          endAfterClaim = true;
+          toast.show("LAST CLAIM!", { duration: 60_000 });
+        }
+      } else if (cards.hasAvailable()) {
         toast.show("CHOOSE ONE OR SPIN ANYWAY", { duration: 60_000 });
       } else if (cards.almostShownIds.size > 0) {
         toast.show("SO CLOSE...", { duration: 60_000 });
@@ -490,8 +545,6 @@ async function main() {
           if (hint) showNearMiss(hint.reels, hint.wanted);
         }
       }
-
-      if (run.actions === 0) fsm.transition("ended");
     });
   }
 
@@ -564,6 +617,7 @@ async function main() {
     run.recordNudge();
     model.reels[reelIdx].nudge(direction);
     refreshAllReels();
+    refreshCardsFromCurrentDigits(); // re-evaluate READY/ALMOST with new digits
     devDrawer.devPanel.refreshInfo();
     if (run.actions === 0) fsm.transition("ended");
   }
@@ -573,7 +627,7 @@ async function main() {
     model.toggleLocked(reelIdx);
     updateLockOverlay(reelViews[reelIdx], model.isLocked(reelIdx));
     devDrawer.devPanel.refreshInfo();
-    // Re-sync to reflect any state change (e.g. if locking affects UI elsewhere)
+    refreshAllCards(); // keep card visuals in sync with current state
     syncReelControls(fsm.state);
   }
 
@@ -603,6 +657,7 @@ async function main() {
   function handleStartRun(): void {
     if (fsm.state !== "betting") return;
 
+    endAfterClaim = false;
     run.configure(economy.anteEnabled);
     run.resetRun();
     economy.resetRun();
@@ -637,6 +692,17 @@ async function main() {
   }
 
   /**
+   * Re-evaluate card READY/ALMOST states from the current visible digits and
+   * repaint the card grid.  Call this whenever digits change outside a full spin
+   * (nudge, offset reset, etc.).  Does NOT touch RNG or spin state.
+   */
+  function refreshCardsFromCurrentDigits(): void {
+    const digits = model.getVisibleCenterDigits();
+    cards.onDigitsChanged(digits);
+    refreshAllCards();
+  }
+
+  /**
    * Card click handler — claim-only path.
    *
    * Only AVAILABLE (green) cards are actionable; CardGrid already blocks clicks
@@ -666,6 +732,19 @@ async function main() {
     // Clear all reel locks so the next spin starts fresh.
     model.resetLocks();
     for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+
+    // If this was the final claim (last spin had drained actions to 0):
+    if (endAfterClaim) {
+      endAfterClaim = false;
+      if (run.actions === 0) {
+        // No bonus actions from this card — end the run now.
+        devDrawer.devPanel.refreshInfo();
+        syncReelControls(fsm.state);
+        fsm.transition("ended");
+        return;
+      }
+      // tier-2+ card restored an action — run continues with the normal flow below.
+    }
 
     // almostShownIds is already cleared by claimOne(); check before refresh.
     toast.show("LOCKS CLEARED  •  SPIN TO CONTINUE", { duration: 1200 });
@@ -778,7 +857,51 @@ async function main() {
     endOverlay.y = PAD_TOP + REEL_SLOT_Y + CTRL_ABOVE; // absolute top of reel box
 
     devDrawer.resize(w, h);
+
+    // "?" button: top-right corner of the canvas, above the DevDrawer handle.
+    rulesBtn.x = w - RBTN_SIZE - 8;
+    rulesBtn.y = 8;
   }
+
+  // ── "?" rules button (always visible, top-right corner) ─────────────────────
+  const rulesBtn        = new Container();
+  rulesBtn.eventMode    = "static";
+  rulesBtn.cursor       = "pointer";
+
+  const rulesBtnBg = new Graphics();
+  const RBTN_SIZE  = 28;
+  rulesBtnBg.roundRect(0, 0, RBTN_SIZE, RBTN_SIZE, 6);
+  rulesBtnBg.fill({ color: 0x1a1a3a });
+  rulesBtnBg.stroke({ color: 0x3a3a6a, width: 1 });
+  rulesBtn.addChild(rulesBtnBg);
+
+  const rulesBtnTxt = new Text({
+    text: "?",
+    style: new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0x7777cc, fontWeight: "bold" }),
+  });
+  rulesBtnTxt.anchor.set(0.5, 0.5);
+  rulesBtnTxt.x = RBTN_SIZE / 2;
+  rulesBtnTxt.y = RBTN_SIZE / 2;
+  rulesBtn.addChild(rulesBtnTxt);
+
+  rulesBtn.on("pointerover", () => { rulesBtnBg.tint = 0xaaaaff; });
+  rulesBtn.on("pointerout",  () => { rulesBtnBg.tint = 0xffffff; });
+  rulesBtn.on("pointerdown", (e: FederatedPointerEvent) => {
+    e.stopPropagation();
+    // Show rules as overlay; clicking PLAY / CLOSE removes it.
+    const overlay = new RulesScreen();
+    overlay.layout(app.screen.width, app.screen.height);
+    app.stage.addChild(overlay);
+    const onR = () => overlay.layout(app.screen.width, app.screen.height);
+    window.addEventListener("resize", onR);
+    overlay.onPlay = () => {
+      window.removeEventListener("resize", onR);
+      app.stage.removeChild(overlay);
+      overlay.destroy({ children: true });
+    };
+  });
+  // Positioned in layout()
+  app.stage.addChild(rulesBtn);
 
   // ── Boot ────────────────────────────────────────────────────────────────────
   refreshAllReels();

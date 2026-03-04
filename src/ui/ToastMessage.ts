@@ -6,7 +6,7 @@ const FADE_OUT_MS = 200;
 
 // ── Visual style ─────────────────────────────────────────────────────────────
 const TOAST_STYLE = new TextStyle({
-  fontFamily: "monospace",
+  fontFamily: "Arial, sans-serif",
   fontSize: 15,
   fill: 0xffffff,
   fontWeight: "bold",

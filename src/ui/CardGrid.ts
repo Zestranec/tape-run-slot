@@ -9,12 +9,22 @@ import {
 } from "pixi.js";
 import { CARDS } from "../config/cards";
 import { CardDef } from "../types/CardTypes";
+import { fitTextToBox } from "./textFit";
 
 // ── Layout constants ─────────────────────────────────────────────────────────
 const COLS       = 5;
 const CARD_W     = 136;
 const CARD_H     = 68;
 const GAP        = 5;
+
+// ── Card inner text zones (all relative to card top-left) ────────────────────
+const TEXT_PAD   = 5;                      // horizontal padding each side
+const TEXT_W     = CARD_W - TEXT_PAD * 2;  // 126 px inner width
+const NAME_Y     = 17;                     // title top
+const NAME_H     = 13;                     // title max height  (≤1 line)
+const DESC_Y     = 31;                     // description top
+const DESC_H     = 22;                     // description max height (≤2 lines)
+const STATE_Y    = 54;                     // state badge top
 
 const SUMMARY_H   = 30;
 const SUMMARY_GAP = 8;
@@ -31,16 +41,14 @@ const TIER_COLOR: Record<number, number> = {
 type CardState = "normal" | "available" | "almost" | "claimed";
 
 // ── Text styles ───────────────────────────────────────────────────────────────
-const SUMMARY_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xcccccc });
-const SUMMARY_WIN_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 13, fill: 0xffcc00, fontWeight: "bold" });
-const CARD_NAME_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 12, fill: 0xffffff, fontWeight: "bold" });
-const CARD_DESC_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0x9999bb });
-const CARD_TIER_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 10, fontWeight: "bold", fill: 0xffffff });
-const CARD_PAYOUT_STYLE = new TextStyle({ fontFamily: "monospace", fontSize: 10, fill: 0xaaffaa });
-const AVAILABLE_STYLE   = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0x44ff88, fontWeight: "bold" });
-const ALMOST_STYLE      = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0xffdd44, fontWeight: "bold" });
-const CLAIMED_STYLE     = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0x666688 });
-const FLASH_STYLE       = new TextStyle({ fontFamily: "monospace", fontSize: 11, fill: 0xffffff, fontWeight: "bold" });
+const SUMMARY_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xcccccc });
+const SUMMARY_WIN_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 13, fill: 0xffcc00, fontWeight: "bold" });
+const CARD_TIER_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fontWeight: "bold", fill: 0xffffff });
+const CARD_PAYOUT_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fill: 0xaaffaa });
+const AVAILABLE_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0x44ff88, fontWeight: "bold" });
+const ALMOST_STYLE      = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0xffdd44, fontWeight: "bold" });
+const CLAIMED_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0x666688 });
+const FLASH_STYLE       = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0xffffff, fontWeight: "bold" });
 
 // ── Pulse animation ───────────────────────────────────────────────────────────
 const PULSE_MIN    = 1.00;
@@ -160,29 +168,40 @@ export class CardGrid extends Container {
     this.drawCardBg(bg, "normal");
     c.addChild(bg);
 
+    // Header row: tier badge (left) + payout (right)
     const tierStyle = new TextStyle({ ...CARD_TIER_STYLE, fill: TIER_COLOR[card.tier] });
     const tierText  = new Text({ text: `T${card.tier}`, style: tierStyle });
-    tierText.x = 5; tierText.y = 4;
+    tierText.x = TEXT_PAD; tierText.y = 4;
     c.addChild(tierText);
 
     const payoutText = new Text({ text: `${card.payoutMult.toFixed(2)}x`, style: CARD_PAYOUT_STYLE });
     payoutText.anchor.set(1, 0);
-    payoutText.x = CARD_W - 5; payoutText.y = 4;
+    payoutText.x = CARD_W - TEXT_PAD; payoutText.y = 4;
     c.addChild(payoutText);
 
-    const nameText = new Text({ text: card.name, style: CARD_NAME_STYLE });
+    // Title — own style so fitTextToBox can mutate fontSize safely
+    const nameStyle = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 12, fill: 0xffffff, fontWeight: "bold" });
+    const nameText  = new Text({ text: card.name, style: nameStyle });
     nameText.anchor.set(0.5, 0);
-    nameText.x = CARD_W / 2; nameText.y = 20;
+    nameText.x = CARD_W / 2;
+    nameText.y = NAME_Y;
+    fitTextToBox(nameText, card.name, TEXT_W, NAME_H, { maxFontSize: 12, minFontSize: 10, ellipsis: true });
     c.addChild(nameText);
 
-    const descText = new Text({ text: card.description, style: CARD_DESC_STYLE });
+    // Description — own style so fitTextToBox can mutate fontSize safely
+    const descStyle = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 10, fill: 0x9999bb });
+    const descText  = new Text({ text: card.description, style: descStyle });
     descText.anchor.set(0.5, 0);
-    descText.x = CARD_W / 2; descText.y = 37;
+    descText.x = CARD_W / 2;
+    descText.y = DESC_Y;
+    fitTextToBox(descText, card.description, TEXT_W, DESC_H, { maxFontSize: 10, minFontSize: 10, ellipsis: true });
     c.addChild(descText);
 
+    // State badge (READY / ALMOST / CLAIMED)
     const stateLabel = new Text({ text: "", style: AVAILABLE_STYLE });
     stateLabel.anchor.set(0.5, 0);
-    stateLabel.x = CARD_W / 2; stateLabel.y = 52;
+    stateLabel.x = CARD_W / 2;
+    stateLabel.y = STATE_Y;
     stateLabel.visible = false;
     c.addChild(stateLabel);
 
