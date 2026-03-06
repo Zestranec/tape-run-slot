@@ -500,9 +500,18 @@ async function main() {
    */
   let endAfterClaim = false;
 
+  /**
+   * True immediately after a card is claimed, until the next SPIN starts.
+   * While true: SPIN is allowed, NUDGE and LOCK are blocked (with toast).
+   */
+  let postClaimSpinRequired = false;
+
   function doSpin(): void {
     if (fsm.state !== "idle") return;
     if (!run.canSpend(1)) return;
+
+    // Lift the post-claim gate the moment a spin is committed.
+    postClaimSpinRequired = false;
 
     // Player is spinning with available (green) cards still on screen — skip them.
     if (cards.hasAvailable()) {
@@ -611,6 +620,10 @@ async function main() {
 
   function doNudge(reelIdx: number, direction: -1 | 1): void {
     if (fsm.state !== "idle") return;
+    if (postClaimSpinRequired) {
+      toast.show("Spin to unlock new card", { duration: 1500 });
+      return;
+    }
     const cost = run.getNudgeCost();
     if (!run.canSpend(cost)) return;
     run.spend(cost);
@@ -624,6 +637,10 @@ async function main() {
 
   function doToggleLock(reelIdx: number): void {
     if (fsm.state !== "idle") return;
+    if (postClaimSpinRequired) {
+      toast.show("Spin to unlock new card", { duration: 1500 });
+      return;
+    }
     model.toggleLocked(reelIdx);
     updateLockOverlay(reelViews[reelIdx], model.isLocked(reelIdx));
     devDrawer.devPanel.refreshInfo();
@@ -641,8 +658,8 @@ async function main() {
    */
   function syncReelControls(state: GameState): void {
     const nudgeCost = run.getNudgeCost();
-    const canNudge  = state === "idle" && run.canSpend(nudgeCost);
-    const canLock   = state === "idle";
+    const canNudge  = state === "idle" && run.canSpend(nudgeCost) && !postClaimSpinRequired;
+    const canLock   = state === "idle" && !postClaimSpinRequired;
 
     for (const rv of reelViews) {
       setCtrlDisabled(rv.nudgeUp,   !canNudge);
@@ -657,7 +674,8 @@ async function main() {
   function handleStartRun(): void {
     if (fsm.state !== "betting") return;
 
-    endAfterClaim = false;
+    endAfterClaim         = false;
+    postClaimSpinRequired = false;
     run.configure(economy.anteEnabled);
     run.resetRun();
     economy.resetRun();
@@ -732,6 +750,10 @@ async function main() {
     // Clear all reel locks so the next spin starts fresh.
     model.resetLocks();
     for (let i = 0; i < REEL_COUNT; i++) updateLockOverlay(reelViews[i], false);
+
+    // Block nudge/lock until the player spins again.
+    postClaimSpinRequired = true;
+    syncReelControls(fsm.state); // dim controls immediately
 
     // If this was the final claim (last spin had drained actions to 0):
     if (endAfterClaim) {
