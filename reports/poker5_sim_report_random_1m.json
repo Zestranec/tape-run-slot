@@ -1,0 +1,265 @@
+{
+  "metadata": {
+    "date": "2026-03-06T14:53:51.567Z",
+    "gitCommit": "8c2dc94",
+    "runs": 1000000,
+    "bet": 10,
+    "ante": false,
+    "policy": "random",
+    "seedStart": 1,
+    "reels": 5,
+    "jokerWeight": 0.33,
+    "suits": 2
+  },
+  "totals": {
+    "totalBet": 10000000,
+    "totalWin": 62088558.5,
+    "rtp": 6.2089,
+    "avgWin": 62.0886,
+    "avgProfit": 52.0886
+  },
+  "perRunStats": {
+    "avgSpinsPerRun": 27.3,
+    "avgNudgesPerRun": 0,
+    "avgActionsUsed": 27.3,
+    "p50Win": 51.4,
+    "p90Win": 90.4,
+    "p99Win": 152.4,
+    "maxWin": 302.4,
+    "hitRate": 1
+  },
+  "cardStats": [
+    {
+      "id": "t1_red_pair",
+      "tier": 1,
+      "payoutMult": 0.08,
+      "availableCount": 4685753,
+      "claimedCount": 1000000,
+      "totalPayoutContribution": 800000.0000106631
+    },
+    {
+      "id": "t1_black_pair",
+      "tier": 1,
+      "payoutMult": 0.08,
+      "availableCount": 4679951,
+      "claimedCount": 1000000,
+      "totalPayoutContribution": 800000.0000106631
+    },
+    {
+      "id": "t1_face_pair",
+      "tier": 1,
+      "payoutMult": 0.1,
+      "availableCount": 4745280,
+      "claimedCount": 1000000,
+      "totalPayoutContribution": 1000000
+    },
+    {
+      "id": "t1_low_pair",
+      "tier": 1,
+      "payoutMult": 0.1,
+      "availableCount": 4562605,
+      "claimedCount": 1000000,
+      "totalPayoutContribution": 1000000
+    },
+    {
+      "id": "t1_match_ends",
+      "tier": 1,
+      "payoutMult": 0.12,
+      "availableCount": 2377001,
+      "claimedCount": 917113,
+      "totalPayoutContribution": 1100535.599981229
+    },
+    {
+      "id": "t1_twin_rank",
+      "tier": 1,
+      "payoutMult": 0.14,
+      "availableCount": 4725114,
+      "claimedCount": 1000000,
+      "totalPayoutContribution": 1399999.9999889317
+    },
+    {
+      "id": "t1_split_pair",
+      "tier": 1,
+      "payoutMult": 0.12,
+      "availableCount": 3664866,
+      "claimedCount": 999162,
+      "totalPayoutContribution": 1198994.3999774083
+    },
+    {
+      "id": "t1_two_faces_row",
+      "tier": 1,
+      "payoutMult": 0.1,
+      "availableCount": 4314656,
+      "claimedCount": 999995,
+      "totalPayoutContribution": 999995
+    },
+    {
+      "id": "t2_three_kind",
+      "tier": 2,
+      "payoutMult": 0.45,
+      "availableCount": 2554916,
+      "claimedCount": 916668,
+      "totalPayoutContribution": 4125006
+    },
+    {
+      "id": "t2_two_pair",
+      "tier": 2,
+      "payoutMult": 0.4,
+      "availableCount": 2740414,
+      "claimedCount": 965428,
+      "totalPayoutContribution": 3861712
+    },
+    {
+      "id": "t2_red_trio",
+      "tier": 2,
+      "payoutMult": 0.35,
+      "availableCount": 3816235,
+      "claimedCount": 999904,
+      "totalPayoutContribution": 3499664
+    },
+    {
+      "id": "t2_black_trio",
+      "tier": 2,
+      "payoutMult": 0.35,
+      "availableCount": 3816407,
+      "claimedCount": 999927,
+      "totalPayoutContribution": 3499744.5
+    },
+    {
+      "id": "t2_mini_straight",
+      "tier": 2,
+      "payoutMult": 0.55,
+      "availableCount": 3473468,
+      "claimedCount": 999606,
+      "totalPayoutContribution": 5497833
+    },
+    {
+      "id": "t2_face_trio",
+      "tier": 2,
+      "payoutMult": 0.4,
+      "availableCount": 4063029,
+      "claimedCount": 999887,
+      "totalPayoutContribution": 3999548
+    },
+    {
+      "id": "t3_straight",
+      "tier": 3,
+      "payoutMult": 1.8,
+      "availableCount": 565475,
+      "claimedCount": 316241,
+      "totalPayoutContribution": 5692338
+    },
+    {
+      "id": "t3_flush",
+      "tier": 3,
+      "payoutMult": 1.7,
+      "availableCount": 1330132,
+      "claimedCount": 673424,
+      "totalPayoutContribution": 11448208
+    },
+    {
+      "id": "t3_full_house",
+      "tier": 3,
+      "payoutMult": 2.2,
+      "availableCount": 636082,
+      "claimedCount": 254545,
+      "totalPayoutContribution": 5599990
+    },
+    {
+      "id": "t3_four_kind",
+      "tier": 3,
+      "payoutMult": 3,
+      "availableCount": 377269,
+      "claimedCount": 150493,
+      "totalPayoutContribution": 4514790
+    },
+    {
+      "id": "t4_straight_flush",
+      "tier": 4,
+      "payoutMult": 8,
+      "availableCount": 62244,
+      "claimedCount": 19932,
+      "totalPayoutContribution": 1594560
+    },
+    {
+      "id": "t4_five_kind",
+      "tier": 4,
+      "payoutMult": 12,
+      "availableCount": 12770,
+      "claimedCount": 3797,
+      "totalPayoutContribution": 455640
+    }
+  ],
+  "winBuckets": [
+    {
+      "label": "0x",
+      "minMult": 0,
+      "maxMult": 0.1,
+      "count": 0,
+      "percentage": 0
+    },
+    {
+      "label": "0.1x–0.2x",
+      "minMult": 0.1,
+      "maxMult": 0.2,
+      "count": 0,
+      "percentage": 0
+    },
+    {
+      "label": "0.2x–0.5x",
+      "minMult": 0.2,
+      "maxMult": 0.5,
+      "count": 0,
+      "percentage": 0
+    },
+    {
+      "label": "0.5x–1x",
+      "minMult": 0.5,
+      "maxMult": 1,
+      "count": 0,
+      "percentage": 0
+    },
+    {
+      "label": "1x–2x",
+      "minMult": 1,
+      "maxMult": 2,
+      "count": 1,
+      "percentage": 0
+    },
+    {
+      "label": "2x–5x",
+      "minMult": 2,
+      "maxMult": 5,
+      "count": 216755,
+      "percentage": 21.68
+    },
+    {
+      "label": "5x–10x",
+      "minMult": 5,
+      "maxMult": 10,
+      "count": 723962,
+      "percentage": 72.4
+    },
+    {
+      "label": "10x–25x",
+      "minMult": 10,
+      "maxMult": 25,
+      "count": 59210,
+      "percentage": 5.92
+    },
+    {
+      "label": "25x–50x",
+      "minMult": 25,
+      "maxMult": 50,
+      "count": 72,
+      "percentage": 0.01
+    },
+    {
+      "label": "50x+",
+      "minMult": 50,
+      "maxMult": null,
+      "count": 0,
+      "percentage": 0
+    }
+  ]
+}

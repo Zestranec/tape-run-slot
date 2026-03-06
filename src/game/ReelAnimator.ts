@@ -28,11 +28,18 @@ export class ReelAnimator {
   private views: ReelViewRef[];
   private model: TapeSlotModel;
   private ticker: Ticker;
+  private indexToText: (idx: number) => string;
 
-  constructor(views: ReelViewRef[], model: TapeSlotModel, ticker: Ticker) {
-    this.views = views;
-    this.model = model;
-    this.ticker = ticker;
+  constructor(
+    views:       ReelViewRef[],
+    model:       TapeSlotModel,
+    ticker:      Ticker,
+    indexToText: (idx: number) => string = (i) => String(i),
+  ) {
+    this.views       = views;
+    this.model       = model;
+    this.ticker      = ticker;
+    this.indexToText = indexToText;
   }
 
   /**
@@ -108,10 +115,10 @@ export class ReelAnimator {
         // Four digit positions during scroll (tape scrolls upward = offset increases).
         // entryTexts[i] is non-null here: delta=0 reels are marked done before the loop.
         const entry = entryTexts[i]!;
-        view.aboveText.text = String(this.model.reels[i].tape[wrap(from + step - 1)]);
-        view.centerText.text = String(this.model.reels[i].tape[wrap(from + step)]);
-        view.belowText.text = String(this.model.reels[i].tape[wrap(from + step + 1)]);
-        entry.text = String(this.model.reels[i].tape[wrap(from + step + 2)]);
+        view.aboveText.text = this.indexToText(this.model.reels[i].tape[wrap(from + step - 1)]);
+        view.centerText.text = this.indexToText(this.model.reels[i].tape[wrap(from + step)]);
+        view.belowText.text = this.indexToText(this.model.reels[i].tape[wrap(from + step + 1)]);
+        entry.text = this.indexToText(this.model.reels[i].tape[wrap(from + step + 2)]);
 
         // Shift all four items upward by the fractional amount, creating smooth scroll.
         const shift = frac * ROW_HEIGHT;
@@ -125,9 +132,9 @@ export class ReelAnimator {
           // Show final digits directly from the precomputed toOffset so the
           // visual state matches what the model will hold after onComplete snaps it.
           const to = toOffsets[i];
-          view.aboveText.text = String(this.model.reels[i].tape[wrap(to - 1)]);
-          view.centerText.text = String(this.model.reels[i].tape[wrap(to)]);
-          view.belowText.text = String(this.model.reels[i].tape[wrap(to + 1)]);
+          view.aboveText.text = this.indexToText(this.model.reels[i].tape[wrap(to - 1)]);
+          view.centerText.text = this.indexToText(this.model.reels[i].tape[wrap(to)]);
+          view.belowText.text = this.indexToText(this.model.reels[i].tape[wrap(to + 1)]);
           view.aboveText.y = Y_ABOVE;
           view.centerText.y = Y_CENTER;
           view.belowText.y = Y_BELOW;

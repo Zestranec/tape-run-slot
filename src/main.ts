@@ -7,6 +7,9 @@ import { getNearMissHint } from "./game/CardEvaluator";
 import { CARDS } from "./config/cards";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
+import {
+  symbolToText, getSymbol, FACE_RANKS, JOKER_IDX,
+} from "./types/PokerTypes";
 import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
 import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
@@ -23,9 +26,9 @@ import { RulesScreen, rulesAlreadySeen } from "./ui/RulesScreen";
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VISUAL CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
-const REEL_WIDTH      = 72;
+const REEL_WIDTH      = 120; // wider for poker card text (e.g. "A♥", "K♠", "★")
 const REEL_HEIGHT     = 160;
-const REEL_GAP        = 10;
+const REEL_GAP        = 8;
 const REEL_AREA_WIDTH = REEL_COUNT * REEL_WIDTH + (REEL_COUNT - 1) * REEL_GAP;
 
 // ── Per-reel control sizes ────────────────────────────────────────────────────
@@ -68,8 +71,8 @@ const PANEL_TOP   = REEL_SLOT_Y + REEL_SLOT_H + PANEL_GAP; // 42 + 221 + 14 = 27
 // ─────────────────────────────────────────────────────────────────────────────
 // TEXT STYLES
 // ─────────────────────────────────────────────────────────────────────────────
-const CENTER_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 54, fill: 0xffffff, fontWeight: "bold" });
-const SIDE_STYLE       = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 30, fill: 0x888899 });
+const CENTER_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 28, fill: 0xffffff, fontWeight: "bold" });
+const SIDE_STYLE       = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0x888899 });
 const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
 const END_TITLE_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 20, fill: 0xff4444, fontWeight: "bold" });
 const END_STAT_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff });
@@ -253,10 +256,25 @@ function createReelView(): ReelView {
   };
 }
 
+/** Return display color for a symbol index (for player-visible text). */
+function symbolFill(idx: number, isCenter: boolean): number {
+  if (idx === JOKER_IDX) return isCenter ? 0xdd44ff : 0xaa22cc; // purple/magenta
+  const sym = getSymbol(idx);
+  const isHigh   = FACE_RANKS.has(sym.rank as never);
+  const isHearts = sym.suit === "hearts";
+  if (isHigh  && isHearts) return isCenter ? 0xff9966 : 0xcc6644; // gold-red
+  if (isHigh  && !isHearts) return isCenter ? 0xffee88 : 0xccbb55; // gold-white
+  if (!isHigh && isHearts)  return isCenter ? 0xff5555 : 0xcc3333; // red
+  return isCenter ? 0x99aacc : 0x667799;                           // blue-gray (low spades)
+}
+
 function updateReelView(view: ReelView, digits: VisibleDigits): void {
-  view.aboveText.text  = String(digits.above);
-  view.centerText.text = String(digits.center);
-  view.belowText.text  = String(digits.below);
+  view.aboveText.text  = symbolToText(digits.above);
+  view.centerText.text = symbolToText(digits.center);
+  view.belowText.text  = symbolToText(digits.below);
+  view.aboveText.style.fill  = symbolFill(digits.above,  false);
+  view.centerText.style.fill = symbolFill(digits.center, true);
+  view.belowText.style.fill  = symbolFill(digits.below,  false);
 }
 
 function updateLockOverlay(view: ReelView, locked: boolean): void {
@@ -430,7 +448,7 @@ async function main() {
 
   function showNearMiss(
     reelIndices: number[],
-    wanted?: number,
+    wanted?: string,
     durationMs = 1400,
   ): void {
     // Cancel any running animation first.
@@ -490,7 +508,7 @@ async function main() {
   }
 
   // ── RunPanel + BetPanel ────────────────────────────────────────────────────
-  const animator       = new ReelAnimator(reelViews, model, app.ticker);
+  const animator       = new ReelAnimator(reelViews, model, app.ticker, symbolToText);
   const spinController = new SpinController(model, fsm, run, animator);
 
   /**
@@ -551,7 +569,7 @@ async function main() {
         const best = almostCards[0];
         if (best) {
           const hint = getNearMissHint(best, digits);
-          if (hint) showNearMiss(hint.reels, hint.wanted);
+          if (hint) showNearMiss(hint.reels, hint.wanted as string | undefined);
         }
       }
     });
@@ -641,6 +659,16 @@ async function main() {
       toast.show("Spin to unlock new card", { duration: 1500 });
       return;
     }
+    const alreadyLocked = model.isLocked(reelIdx);
+    if (!alreadyLocked) {
+      // Locking costs 1 action; enforce max-2-holds limit.
+      if (model.lockedCount() >= 2) {
+        toast.show("Max 2 holds", { duration: 1500 });
+        return;
+      }
+      if (!run.canSpend(run.getLockCost())) return;
+      run.spend(run.getLockCost());
+    }
     model.toggleLocked(reelIdx);
     updateLockOverlay(reelViews[reelIdx], model.isLocked(reelIdx));
     devDrawer.devPanel.refreshInfo();
@@ -659,9 +687,13 @@ async function main() {
   function syncReelControls(state: GameState): void {
     const nudgeCost = run.getNudgeCost();
     const canNudge  = state === "idle" && run.canSpend(nudgeCost) && !postClaimSpinRequired;
-    const canLock   = state === "idle" && !postClaimSpinRequired;
+    const lockBase  = state === "idle" && !postClaimSpinRequired;
 
-    for (const rv of reelViews) {
+    for (let i = 0; i < reelViews.length; i++) {
+      const rv        = reelViews[i];
+      const isLocked  = model.isLocked(i);
+      // Can lock: not already at limit (unless this reel is already locked = can unlock)
+      const canLock   = lockBase && (isLocked || (run.canSpend(run.getLockCost()) && model.lockedCount() < 2));
       setCtrlDisabled(rv.nudgeUp,   !canNudge);
       setCtrlDisabled(rv.nudgeDown, !canNudge);
       setCtrlDisabled(rv.lockBtn,   !canLock);
@@ -737,7 +769,7 @@ async function main() {
     const { payoutMult, tier } = cards.claimOne(cardId);
     economy.addWin(payoutMult);
 
-    if (tier >= 2) {
+    if (tier >= 4) {
       run.addActions(1);
       if (s === "ended" && run.actions > 0) fsm.transition("idle");
     }

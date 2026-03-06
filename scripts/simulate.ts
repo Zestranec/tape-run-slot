@@ -26,7 +26,7 @@ import type { Policy }  from "../src/sim/BotStrategy.js";
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
-function parseArgs(): SimConfig & { _reportsDir: string; _tag: string } {
+function parseArgs(): SimConfig & { _reportsDir: string; _tag: string; _suffix: string } {
   const argv = process.argv.slice(2);
 
   function flag(name: string, defaultVal: string): string {
@@ -41,14 +41,15 @@ function parseArgs(): SimConfig & { _reportsDir: string; _tag: string } {
   const policy    = flag("policy",    "baseline") as Policy;
   const seedStart = Math.max(0,    parseInt(flag("seedStart", "1"),     10));
   const sample    = Math.max(1,    parseInt(flag("sample",    "5000"),  10));
-  const tag       = flag("tag", "");
+  const tag       = flag("tag",    "");
+  const suffix    = flag("suffix", "");
 
   if (!["baseline", "smart", "random"].includes(policy)) {
     console.error(`Unknown policy "${policy}". Use baseline, random, or smart.`);
     process.exit(1);
   }
 
-  return { runs, bet, ante, policy, seedStart, sampleSize: sample, _reportsDir: "reports", _tag: tag };
+  return { runs, bet, ante, policy, seedStart, sampleSize: sample, _reportsDir: "reports", _tag: tag, _suffix: suffix };
 }
 
 // ── Git commit hash (best-effort) ─────────────────────────────────────────────
@@ -171,9 +172,10 @@ async function main(): Promise<void> {
     return `${n}`;
   }
 
-  const tagSuffix  = config._tag ? `_${config._tag}` : "";
-  const jsonPath   = join(reportsDir, `sim_report_${config.policy}_${runsLabel(config.runs)}${tagSuffix}.json`);
-  const csvPath    = join(reportsDir, `sim_runs_sample_${config.policy}${tagSuffix}.csv`);
+  const tagPrefix   = (config as {_tag: string})._tag ? `${(config as {_tag: string})._tag}_` : "";
+  const suffixPart  = (config as {_suffix: string})._suffix ? `_${(config as {_suffix: string})._suffix}` : "";
+  const jsonPath    = join(reportsDir, `${tagPrefix}sim_report_${config.policy}_${runsLabel(config.runs)}${suffixPart}.json`);
+  const csvPath     = join(reportsDir, `${tagPrefix}sim_runs_sample_${config.policy}${suffixPart}.csv`);
 
   writeFileSync(jsonPath, JSON.stringify(report, null, 2), "utf-8");
   writeFileSync(csvPath,  buildCsv(sample), "utf-8");

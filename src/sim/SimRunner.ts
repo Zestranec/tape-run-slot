@@ -19,6 +19,7 @@ import { CARDS }            from "../config/cards";
 import { CardDef }          from "../types/CardTypes";
 import { isCardSatisfied }  from "../game/CardEvaluator";
 import { RunController }    from "../game/RunController";
+import { SYMBOL_POOL }      from "../types/PokerTypes";
 import {
   Policy,
   wrap,
@@ -29,8 +30,9 @@ import {
 } from "./BotStrategy";
 
 // ── Constants (mirrors TapeSlotModel / SpinController) ──────────────────────
-const REEL_COUNT = 7;
-const TAPE_LEN   = 30; // DEFAULT_TAPE_LENGTH
+const REEL_COUNT  = 5;
+const TAPE_LEN    = 30; // DEFAULT_TAPE_LENGTH
+const POOL_LEN    = SYMBOL_POOL.length; // 1633 (weighted pool for symbol generation)
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -83,13 +85,16 @@ export interface WinBucket {
 
 export interface SimReport {
   metadata: {
-    date:      string;
-    gitCommit: string;
-    runs:      number;
-    bet:       number;
-    ante:      boolean;
-    policy:    Policy;
-    seedStart: number;
+    date:        string;
+    gitCommit:   string;
+    runs:        number;
+    bet:         number;
+    ante:        boolean;
+    policy:      Policy;
+    seedStart:   number;
+    reels:       number;
+    jokerWeight: number;
+    suits:       number;
   };
   totals: {
     totalBet:  number;
@@ -115,32 +120,18 @@ export interface SimReport {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /**
- * Generate all 7 tapes for a given seed.
+ * Generate all 5 tapes for a given seed using the same weighted symbol pool
+ * as TapeReel.generate():
+ *   rng.nextInt(0, POOL_LEN - 1) → index into SYMBOL_POOL → symbol index (0-16)
  *
- * Exactly mirrors TapeSlotModel.rebuildFromSeed():
- *   const rng = new RNG(seed);
- *   for 7 reels: TapeReel.generate(rng, 30)
- *
- * TapeReel.generate logic: pick a digit 1-9 from RNG; retry if it would
- * create 3+ identical in a row (up to 50 attempts).
+ * Exactly mirrors TapeSlotModel.rebuildFromSeed() for bit-for-bit determinism.
  */
 function generateTapes(seed: number, out: number[][]): void {
   const rng = new RNG(seed);
   for (let ri = 0; ri < REEL_COUNT; ri++) {
     const tape = out[ri];
     for (let i = 0; i < TAPE_LEN; i++) {
-      let digit = 0;
-      let attempts = 0;
-      do {
-        digit = rng.nextInt(1, 9);
-        attempts++;
-      } while (
-        i >= 2 &&
-        tape[i - 1] === digit &&
-        tape[i - 2] === digit &&
-        attempts < 50
-      );
-      tape[i] = digit;
+      tape[i] = SYMBOL_POOL[rng.nextInt(0, POOL_LEN - 1)];
     }
   }
 }
@@ -270,7 +261,7 @@ export function runSimulation(
       // ── SMART NUDGE (baseline skips this block entirely) ───────────────────
       if (policy === "smart") {
         const nudgeCost = run.getNudgeCost();
-        if (nudgeCost <= 2 && run.canSpend(nudgeCost)) {
+        if (nudgeCost <= 3 && run.canSpend(nudgeCost)) {
           const nudge = findBestNudge(tapes, offsets, TAPE_LEN, claimedIds);
           if (nudge !== null) {
             offsets[nudge.reelIdx] = wrap(offsets[nudge.reelIdx] + nudge.delta, TAPE_LEN);
@@ -342,13 +333,16 @@ export function runSimulation(
   // ── Build report ─────────────────────────────────────────────────────────
   const report: SimReport = {
     metadata: {
-      date:      new Date().toISOString(),
-      gitCommit: config.gitCommit ?? "unknown",
+      date:        new Date().toISOString(),
+      gitCommit:   config.gitCommit ?? "unknown",
       runs,
       bet,
       ante,
       policy,
       seedStart,
+      reels:       5,
+      jokerWeight: 0.33,
+      suits:       2,
     },
     totals: {
       totalBet:  round(grandTotalBet,  2),
@@ -415,7 +409,7 @@ function performClaim(
 ): void {
   const payout = bet * card.payoutMult;
   claimedIds.add(card.id);
-  if (card.tier >= 2) run.addActions(1);
+  if (card.tier >= 4) run.addActions(1);
 
   const cs = cardStatsMap.get(card.id)!;
   cs.claimedCount++;

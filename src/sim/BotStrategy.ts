@@ -5,10 +5,10 @@
  *
  *   "baseline"  — Never nudge.  Just spin, evaluate, claim best, spin again.
  *
- *   "smart"     — Evaluate every cheap single-step nudge (7 reels × ±1 = 14
+ *   "smart"     — Evaluate every cheap single-step nudge (5 reels × ±1 = 10
  *                 candidates) before each spin.  Perform the nudge that would
  *                 create the highest-value newly available card, provided the
- *                 nudge cost is ≤ 2 actions.  Fall through to a spin if no
+ *                 nudge cost is ≤ 3 actions.  Fall through to a spin if no
  *                 beneficial nudge is found.
  *
  * All functions are pure (no mutation of their arguments) and deterministic:

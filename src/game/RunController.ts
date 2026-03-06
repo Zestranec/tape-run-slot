@@ -2,15 +2,20 @@
  * RunController — actions economy for a single run.
  *
  * A run starts with startActions and ends when actions reach 0.
- * Each SPIN costs 1 action.
- * Each NUDGE costs a fatigue-based amount (see getNudgeCost).
- * LOCK/UNLOCK has no cost.
  *
- * Call configure(ante) before resetRun() to set the correct action budget.
+ * Costs:
+ *   SPIN   = 1 action
+ *   HOLD   = 1 action (toggling a reel to locked state; unlocking is free)
+ *   NUDGE  = 2 actions base + fatigue:
+ *              nudgeCount 0-2 → 2
+ *              nudgeCount 3-5 → 3
+ *              nudgeCount 6+  → 4
+ *
+ * Max simultaneous holds = 2 (enforced in main.ts / simulation).
  */
 export class RunController {
-  static readonly DEFAULT_ACTIONS = 15;
-  static readonly ANTE_ACTIONS    = 18;
+  static readonly DEFAULT_ACTIONS = 20;
+  static readonly ANTE_ACTIONS    = 25;
 
   private _startActions = RunController.DEFAULT_ACTIONS;
   private _maxActions   = RunController.DEFAULT_ACTIONS;
@@ -45,20 +50,22 @@ export class RunController {
   }
 
   /**
-   * Nudge cost based on nudgeCount BEFORE the increment.
-   *   nudgeCount 0-2  → cost 1
-   *   nudgeCount 3-5  → cost 2
-   *   nudgeCount 6+   → cost 3
+   * Nudge cost with base 2 + fatigue tiers:
+   *   nudgeCount 0-2 → cost 2
+   *   nudgeCount 3-5 → cost 3
+   *   nudgeCount 6+  → cost 4
    */
   getNudgeCost(): number {
-    if (this._nudgeCount < 3) return 1;
-    if (this._nudgeCount < 6) return 2;
-    return 3;
+    if (this._nudgeCount < 3) return 2;
+    if (this._nudgeCount < 6) return 3;
+    return 4;
   }
 
+  /** Lock (hold) cost: always 1 action. */
+  getLockCost(): number { return 1; }
+
   /**
-   * Record a successful nudge: increment nudgeCount and return the cost
-   * that was (and should already have been) spent.
+   * Record a successful nudge: increment nudgeCount.
    * Caller MUST call canSpend + spend BEFORE calling this.
    */
   recordNudge(): number {
