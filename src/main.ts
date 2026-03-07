@@ -1,15 +1,13 @@
 import {
   Application, Container, Graphics, Rectangle,
-  Text, TextStyle, FederatedPointerEvent,
+  Sprite, Text, TextStyle, Texture, FederatedPointerEvent,
 } from "pixi.js";
 import { GameStateMachine, GameState } from "./core/GameStateMachine";
 import { getNearMissHint } from "./game/CardEvaluator";
 import { CARDS } from "./config/cards";
 import { TapeSlotModel, REEL_COUNT } from "./game/TapeSlotModel";
 import { VisibleDigits } from "./game/TapeReel";
-import {
-  symbolToText, getSymbol, FACE_RANKS, JOKER_IDX,
-} from "./types/PokerTypes";
+import { getSymbolTexture } from "./game/CardTextures";
 import { ReelAnimator, ReelViewRef } from "./game/ReelAnimator";
 import { SpinController } from "./game/SpinController";
 import { RunController } from "./game/RunController";
@@ -41,6 +39,10 @@ const CTRL_ABOVE  = NUDGE_H + NUDGE_GAP;              // 21 px
 const CTRL_BELOW  = NUDGE_GAP + NUDGE_H + 3 + LOCK_H; // 40 px  (gap+nudge+gap+lock)
 const REEL_SLOT_H = CTRL_ABOVE + REEL_HEIGHT + CTRL_BELOW; // 221 px per slot
 
+// Symbol sprite dimensions — must match SYMBOL_W / SYMBOL_H in ReelAnimator.ts.
+const SYMBOL_W = 96; // card width — centred within REEL_WIDTH
+const SYMBOL_H = 96; // card height — partial visibility via container mask
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT CONSTANTS
 //
@@ -71,9 +73,6 @@ const PANEL_TOP   = REEL_SLOT_Y + REEL_SLOT_H + PANEL_GAP; // 42 + 221 + 14 = 27
 // ─────────────────────────────────────────────────────────────────────────────
 // TEXT STYLES
 // ─────────────────────────────────────────────────────────────────────────────
-const CENTER_STYLE     = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 28, fill: 0xffffff, fontWeight: "bold" });
-const SIDE_STYLE       = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0x888899 });
-const LOCK_LABEL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 11, fill: 0xffaa00, fontWeight: "bold" });
 const END_TITLE_STYLE  = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 20, fill: 0xff4444, fontWeight: "bold" });
 const END_STAT_STYLE   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 14, fill: 0xffffff });
 const END_PROFIT_POS   = new TextStyle({ fontFamily: "Arial, sans-serif", fontSize: 16, fill: 0x44ff88, fontWeight: "bold" });
@@ -98,11 +97,10 @@ const NEAR_MISS_LBL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fon
 interface ReelView extends ReelViewRef {
   slot:           Container;
   container:      Container;
-  aboveText:      Text;
-  centerText:     Text;
-  belowText:      Text;
+  aboveSprite:    Sprite;
+  centerSprite:   Sprite;
+  belowSprite:    Sprite;
   lockOverlay:    Graphics;
-  lockLabel:      Text;        // kept for interface compat, always hidden
   nudgeUp:        Container;
   nudgeDown:      Container;
   lockBtn:        Container;
@@ -147,20 +145,32 @@ function createReelView(): ReelView {
   bg.eventMode = "none";
   container.addChild(bg);
 
-  const aboveText = new Text({ text: "0", style: SIDE_STYLE });
-  aboveText.anchor.set(0.5);
-  aboveText.x = CX; aboveText.y = 30; aboveText.alpha = 0.4;
-  container.addChild(aboveText);
+  const aboveSprite = new Sprite(Texture.WHITE);
+  aboveSprite.anchor.set(0.5);
+  aboveSprite.x = CX; aboveSprite.y = -16; // Y_CENTER - SLOT_H; top 1/3 peeks below mask top
+  aboveSprite.width = SYMBOL_W; aboveSprite.height = SYMBOL_H;
+  aboveSprite.alpha = 0.4;
+  container.addChild(aboveSprite);
 
-  const centerText = new Text({ text: "0", style: CENTER_STYLE });
-  centerText.anchor.set(0.5);
-  centerText.x = CX; centerText.y = REEL_HEIGHT / 2;
-  container.addChild(centerText);
+  const centerSprite = new Sprite(Texture.WHITE);
+  centerSprite.anchor.set(0.5);
+  centerSprite.x = CX; centerSprite.y = REEL_HEIGHT / 2;
+  centerSprite.width = SYMBOL_W; centerSprite.height = SYMBOL_H;
+  container.addChild(centerSprite);
 
-  const belowText = new Text({ text: "0", style: SIDE_STYLE });
-  belowText.anchor.set(0.5);
-  belowText.x = CX; belowText.y = REEL_HEIGHT - 30; belowText.alpha = 0.4;
-  container.addChild(belowText);
+  const belowSprite = new Sprite(Texture.WHITE);
+  belowSprite.anchor.set(0.5);
+  belowSprite.x = CX; belowSprite.y = 176; // Y_CENTER + SLOT_H; bottom 1/3 peeks above mask bottom
+  belowSprite.width = SYMBOL_W; belowSprite.height = SYMBOL_H;
+  belowSprite.alpha = 0.4;
+  container.addChild(belowSprite);
+
+  // Permanent clip mask — top/bottom cards visible only in the 1/3 that falls within the window.
+  const reelMask = new Graphics();
+  reelMask.rect(0, 0, REEL_WIDTH, REEL_HEIGHT);
+  reelMask.fill({ color: 0xffffff });
+  container.addChild(reelMask);
+  container.mask = reelMask;
 
   const lockOverlay = new Graphics();
   lockOverlay.roundRect(1, 1, REEL_WIDTH - 2, REEL_HEIGHT - 2, 5);
@@ -169,13 +179,6 @@ function createReelView(): ReelView {
   lockOverlay.visible   = false;
   lockOverlay.eventMode = "none";
   container.addChild(lockOverlay);
-
-  // lockLabel: kept in interface for compat, always invisible (replaced by lockBtn)
-  const lockLabel = new Text({ text: "LOCK", style: LOCK_LABEL_STYLE });
-  lockLabel.anchor.set(0.5);
-  lockLabel.x = CX; lockLabel.y = REEL_HEIGHT - 12;
-  lockLabel.visible = false;
-  container.addChild(lockLabel);
 
   // centerHit: invisible hit zone over center digit for lock-toggle click
   const centerHit  = new Container();
@@ -247,8 +250,8 @@ function createReelView(): ReelView {
 
   return {
     slot, container,
-    aboveText, centerText, belowText,
-    lockOverlay, lockLabel,
+    aboveSprite, centerSprite, belowSprite,
+    lockOverlay,
     nudgeUp, nudgeDown,
     lockBtn, lockBtnBg, lockBtnLabel,
     centerHit,
@@ -256,25 +259,13 @@ function createReelView(): ReelView {
   };
 }
 
-/** Return display color for a symbol index (for player-visible text). */
-function symbolFill(idx: number, isCenter: boolean): number {
-  if (idx === JOKER_IDX) return isCenter ? 0xdd44ff : 0xaa22cc; // purple/magenta
-  const sym = getSymbol(idx);
-  const isHigh   = FACE_RANKS.has(sym.rank as never);
-  const isHearts = sym.suit === "hearts";
-  if (isHigh  && isHearts) return isCenter ? 0xff9966 : 0xcc6644; // gold-red
-  if (isHigh  && !isHearts) return isCenter ? 0xffee88 : 0xccbb55; // gold-white
-  if (!isHigh && isHearts)  return isCenter ? 0xff5555 : 0xcc3333; // red
-  return isCenter ? 0x99aacc : 0x667799;                           // blue-gray (low spades)
-}
-
 function updateReelView(view: ReelView, digits: VisibleDigits): void {
-  view.aboveText.text  = symbolToText(digits.above);
-  view.centerText.text = symbolToText(digits.center);
-  view.belowText.text  = symbolToText(digits.below);
-  view.aboveText.style.fill  = symbolFill(digits.above,  false);
-  view.centerText.style.fill = symbolFill(digits.center, true);
-  view.belowText.style.fill  = symbolFill(digits.below,  false);
+  // Reversed layout — matches downward animation direction:
+  //   aboveSprite shows tape[offset+1] (next symbol entering from top)
+  //   belowSprite shows tape[offset-1] (symbol that just passed center)
+  view.aboveSprite.texture  = getSymbolTexture(digits.below);
+  view.centerSprite.texture = getSymbolTexture(digits.center);
+  view.belowSprite.texture  = getSymbolTexture(digits.above);
 }
 
 function updateLockOverlay(view: ReelView, locked: boolean): void {
@@ -508,7 +499,7 @@ async function main() {
   }
 
   // ── RunPanel + BetPanel ────────────────────────────────────────────────────
-  const animator       = new ReelAnimator(reelViews, model, app.ticker, symbolToText);
+  const animator       = new ReelAnimator(reelViews, model, app.ticker, getSymbolTexture);
   const spinController = new SpinController(model, fsm, run, animator);
 
   /**

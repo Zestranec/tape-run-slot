@@ -249,7 +249,10 @@ export async function loadAssets(
   onProgress: (p: number) => void,
 ): Promise<void> {
   const extras: { alias: string; src: string }[] = [
-    // e.g. { alias: "sheet", src: `${import.meta.env.BASE_URL}assets/sheet.json` },
+    {
+      alias: "cards_atlas",
+      src:   `${import.meta.env.BASE_URL}assets/cards_atlas/cards_atlas.json`,
+    },
   ];
 
   if (extras.length === 0) return; // nothing to load; fake-cap handles the bar

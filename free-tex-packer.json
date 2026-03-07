@@ -1,0 +1,34 @@
+{
+  "folders": [
+    {
+      "packOptions": {
+        "textureName": "cards_atlas",
+        "width": 2048,
+        "height": 2048,
+        "allowRotation": false,
+        "padding": 4,
+        "extrude": 2,
+        "powerOfTwo": false
+      },
+      "images": [
+        "public/assets/cards/A_heart.png",
+        "public/assets/cards/K_heart.png",
+        "public/assets/cards/Q_heart.png",
+        "public/assets/cards/J_heart.png",
+        "public/assets/cards/9_heart.png",
+        "public/assets/cards/8_heart.png",
+        "public/assets/cards/7_heart.png",
+        "public/assets/cards/6_heart.png",
+        "public/assets/cards/A_spade.png",
+        "public/assets/cards/K_spade.png",
+        "public/assets/cards/Q_spade.png",
+        "public/assets/cards/J_spade.png",
+        "public/assets/cards/9_spade.png",
+        "public/assets/cards/8_spade.png",
+        "public/assets/cards/7_spade.png",
+        "public/assets/cards/6_spade.png",
+        "public/assets/cards/joker.png"
+      ]
+    }
+  ]
+}
