@@ -16,7 +16,7 @@ const START_STAGGER_MS = 30;
  *   Wall-clock stop time[i] = i * START_STAGGER_MS + (SPIN_DURATION_MS + i * STOP_GAP_MS)
  *                            = SPIN_DURATION_MS + i * 140 ms
  */
-const STOP_GAP_MS = 110;
+const STOP_GAP_MS = 410;
 
 // ── Must match REEL visual constants in main.ts ───────────────────────────────
 const REEL_WIDTH  = 120;
@@ -50,7 +50,7 @@ const BOUNCE_O2 = 1; // secondary micro-bounce (px)
 
 // ── Motion blur ───────────────────────────────────────────────────────────────
 const BLUR_FACTOR = 2.0; // strengthY = speedPxMs * BLUR_FACTOR
-const MAX_BLUR    = 12;  // cap so symbols remain recognisable at peak speed
+const MAX_BLUR    = 7;  // cap so symbols remain recognisable at peak speed
 
 /** Minimal view interface — keeps ReelAnimator decoupled from main.ts internals. */
 export interface ReelViewRef {
