@@ -2,11 +2,11 @@ import { Container, Sprite, Texture, Ticker } from "pixi.js";
 import { TapeSlotModel } from "./TapeSlotModel";
 import { SpinResult } from "./SpinController";
 
-/** Total duration of one reel's spin animation (ms). */
-export const SPIN_DURATION_MS = 1500;
+/** Per-reel spin duration in ms (excluding stagger delay). */
+export const SPIN_DURATION_MS = 2000;
 
-/** Stagger delay between consecutive reels (ms). */
-const STAGGER_MS = 60;
+/** Stagger start delay between consecutive reels (ms). */
+const STAGGER_MS = 80;
 
 // ── Must match REEL visual constants in main.ts ───────────────────────────────
 const REEL_WIDTH  = 120;
@@ -24,7 +24,17 @@ const SYMBOL_H = 96;
 // ── Endless strip ─────────────────────────────────────────────────────────────
 const NUM_SPRITES      = 5;
 const STRIP_H          = NUM_SPRITES * SLOT_H; // 480 px — one full loop
-const BOTTOM_THRESHOLD = REEL_HEIGHT + SLOT_H;  // 256 px — recycle below here
+const BOTTOM_THRESHOLD = REEL_HEIGHT + SLOT_H; // 256 px — recycle below here
+
+// ── Minimum rotations per reel before stopping ────────────────────────────────
+// Guarantees forward-only motion is unambiguous even for small forward deltas.
+// Reel i uses BASE_ROTATIONS[i], producing a left-to-right wave stop effect.
+const BASE_ROTATIONS = [2, 2.25, 2.5, 2.75, 3];
+
+// ── Stop bounce ───────────────────────────────────────────────────────────────
+const BOUNCE_DURATION_MS = 140; // total bounce duration after main spin ends
+const BOUNCE_OVERSHOOT   = 6;   // px downward overshoot
+const BOUNCE_RETURN      = 3;   // px upward bounce back
 
 /** Minimal view interface — keeps ReelAnimator decoupled from main.ts internals. */
 export interface ReelViewRef {
@@ -53,11 +63,12 @@ export class ReelAnimator {
   }
 
   /**
-   * Animate all reels downward from fromOffsets to toOffsets.
+   * Animate all reels forward (downward) from fromOffsets to toOffsets.
+   * Each reel completes its assigned minimum rotations before stopping.
    * The model is NOT updated here; the caller updates it inside onComplete.
    */
   animate(result: SpinResult, onComplete: () => void): void {
-    const { deltas, fromOffsets, toOffsets } = result;
+    const { fromOffsets, toOffsets } = result;
     const reelCount = this.views.length;
     const L = this.model.tapeLength;
     const wrapPos = (n: number): number => ((n % L) + L) % L;
@@ -65,29 +76,46 @@ export class ReelAnimator {
     // ── Per-sprite bookkeeping ────────────────────────────────────────────────
     interface SpriteEntry {
       sprite:    Sprite;
-      symbolIdx: number; // current symbol index shown
+      symbolIdx: number;
     }
 
     // ── Per-reel animation state ──────────────────────────────────────────────
     interface ReelState {
       sprites:     SpriteEntry[];
-      /** Next TAPE POSITION (unwrapped integer; apply wrapPos before tape access). */
-      nextTapePos: number;
+      totalPx:     number;   // pre-calculated total pixel travel
       prevTotalPx: number;
+      nextTapePos: number;
+      bouncing:    boolean;
+      bounceStart: number;   // timestamp when bounce phase began
     }
 
     const states: Array<ReelState | null> = [];
     const reelDone = new Array<boolean>(reelCount).fill(false);
 
     for (let i = 0; i < reelCount; i++) {
-      if (deltas[i] === 0) {
+      const fromOffset = fromOffsets[i];
+      const toOffset   = toOffsets[i];
+
+      // Forward-only delta: always the positive (downward) distance.
+      // Since SpinController guarantees delta = (fromOffset + rawDelta) % L with
+      // rawDelta ∈ [1, L-1], forwardDelta is always in [1, L-1] for spinning reels
+      // and 0 for locked reels.
+      const forwardDelta = (toOffset - fromOffset + L) % L;
+
+      if (forwardDelta === 0) {
+        // Locked reel — no animation needed.
         reelDone[i] = true;
         states.push(null);
         continue;
       }
 
+      // Total steps = minimum full rotations + forward delta to target.
+      const rotBase    = BASE_ROTATIONS[Math.min(i, BASE_ROTATIONS.length - 1)];
+      const minSteps   = Math.ceil(rotBase * L);
+      const totalSteps = minSteps + forwardDelta;
+      const totalPx    = totalSteps * SLOT_H;
+
       const view = this.views[i];
-      const from = fromOffsets[i];
       const tape = this.model.reels[i].tape;
 
       // ── Hide static sprites during animation ──────────────────────────────
@@ -100,22 +128,21 @@ export class ReelAnimator {
       // Reversed layout — matches downward motion convention:
       //   k = slot offset from center (negative = above, positive = below)
       //
-      //   k=-2  y=-112  tapePos=from+2  (top buffer, next incoming symbols)
-      //   k=-1  y=-16   tapePos=from+1  (above in reversed static layout)
-      //   k= 0  y= 80   tapePos=from    (center)
-      //   k=+1  y=176   tapePos=from-1  (below in reversed static layout)
-      //   k=+2  y=272   tapePos=from-2  (bottom buffer, exits first)
+      //   k=-2  y=-112  tapePos=from+2  (top buffer — incoming symbols)
+      //   k=-1  y= -16  tapePos=from+1  (above in reversed static layout)
+      //   k= 0  y=  80  tapePos=from    (center)
+      //   k=+1  y= 176  tapePos=from-1  (below in reversed static layout)
+      //   k=+2  y= 272  tapePos=from-2  (bottom buffer — exits first)
       //
-      // nextTapePos starts at from+3 (one beyond the topmost sprite's index).
-      // When a sprite exits the bottom threshold it is moved to the top and
-      // assigned tape[nextTapePos++], carrying the correct upcoming symbol.
+      // nextTapePos starts at from+3 (one past the topmost sprite).
+      // Each recycled sprite gets the next upcoming tape symbol.
 
       const half = Math.floor(NUM_SPRITES / 2); // 2
       const sprites: SpriteEntry[] = [];
 
       for (let k = -half; k <= half; k++) {
         const y0      = Y_CENTER + k * SLOT_H;
-        const tapePos = wrapPos(from - k);
+        const tapePos = wrapPos(fromOffset - k);
         const symIdx  = tape[tapePos];
 
         const sprite = new Sprite(this.indexToTexture(symIdx));
@@ -131,27 +158,53 @@ export class ReelAnimator {
 
       states.push({
         sprites,
-        nextTapePos: from + half + 1, // from + 3 (unwrapped; wrapPos applied at access)
-        prevTotalPx: 0,
+        totalPx,
+        prevTotalPx:  0,
+        nextTapePos:  fromOffset + half + 1, // = from + 3
+        bouncing:     false,
+        bounceStart:  0,
       });
     }
 
     const startTime = performance.now();
 
     const onTick = (): void => {
-      const elapsed = performance.now() - startTime;
+      const now     = performance.now();
+      const elapsed = now - startTime;
 
       for (let i = 0; i < reelCount; i++) {
         if (reelDone[i]) continue;
 
-        const reelElapsed = elapsed - i * STAGGER_MS;
+        const state = states[i]!;
+        const view  = this.views[i];
+
+        // ── Bounce phase ───────────────────────────────────────────────────────
+        if (state.bouncing) {
+          const bt     = Math.min((now - state.bounceStart) / BOUNCE_DURATION_MS, 1);
+          const offset = bounceCurve(bt);
+          view.aboveSprite.y  = Y_ABOVE  + offset;
+          view.centerSprite.y = Y_CENTER + offset;
+          view.belowSprite.y  = Y_BELOW  + offset;
+
+          if (bt >= 1) {
+            // Settle to exact final positions.
+            view.aboveSprite.y  = Y_ABOVE;
+            view.centerSprite.y = Y_CENTER;
+            view.belowSprite.y  = Y_BELOW;
+            reelDone[i] = true;
+          }
+          continue;
+        }
+
+        // ── Main spin phase ────────────────────────────────────────────────────
+        const startDelay  = i * STAGGER_MS;
+        const reelElapsed = elapsed - startDelay;
         if (reelElapsed <= 0) continue;
 
-        const t     = Math.min(reelElapsed / SPIN_DURATION_MS, 1);
-        const state = states[i]!;
-        const tape  = this.model.reels[i].tape;
+        const tape = this.model.reels[i].tape;
+        const t    = Math.min(reelElapsed / SPIN_DURATION_MS, 1);
 
-        const totalPx  = spinProgress(t) * deltas[i] * SLOT_H;
+        const totalPx  = spinProgress(t) * state.totalPx;
         const movement = totalPx - state.prevTotalPx;
         state.prevTotalPx = totalPx;
 
@@ -161,34 +214,37 @@ export class ReelAnimator {
           // Recycle: sprite exits bottom → wrap to top with next tape symbol.
           while (entry.sprite.y > BOTTOM_THRESHOLD) {
             entry.sprite.y -= STRIP_H;
-            const pos        = wrapPos(state.nextTapePos++);
-            entry.symbolIdx  = tape[pos];
+            const pos = wrapPos(state.nextTapePos++);
+            entry.symbolIdx = tape[pos];
             entry.sprite.texture = this.indexToTexture(entry.symbolIdx);
           }
 
           entry.sprite.alpha = spriteAlpha(entry.sprite.y);
         }
 
+        // ── Main spin complete → start bounce ──────────────────────────────────
         if (t >= 1) {
-          reelDone[i] = true;
-          // Restore static sprites with guaranteed correct final content,
-          // then move animation sprites off-screen so they don't overlap.
+          // Snap static sprites to guaranteed-correct final content.
           this.restoreStaticSprites(i, toOffsets[i]);
+          // Move animation sprites off-screen so they don't overlap static ones.
           for (const entry of state.sprites) {
             entry.sprite.y = -2000;
           }
+          state.bouncing    = true;
+          state.bounceStart = now;
         }
       }
 
+      // ── All reels done ─────────────────────────────────────────────────────
       if (reelDone.every(Boolean)) {
         this.ticker.remove(onTick);
 
-        // Tear down animation sprites for all animated reels.
+        // Destroy animation sprites.
         for (let i = 0; i < reelCount; i++) {
-          const state = states[i];
-          if (!state) continue;
+          const st = states[i];
+          if (!st) continue;
           const view = this.views[i];
-          for (const entry of state.sprites) {
+          for (const entry of st.sprites) {
             view.container.removeChild(entry.sprite);
             entry.sprite.destroy();
           }
@@ -204,9 +260,9 @@ export class ReelAnimator {
   /**
    * Restore the 3 static sprites with the correct final content.
    * Uses the reversed layout that matches downward animation:
-   *   aboveSprite  → tape[toOffset + 1]  (next upcoming symbol)
+   *   aboveSprite  → tape[toOffset + 1]  (next symbol entering from top)
    *   centerSprite → tape[toOffset]       (result)
-   *   belowSprite  → tape[toOffset - 1]  (symbol just passed)
+   *   belowSprite  → tape[toOffset - 1]  (symbol just passed center)
    */
   private restoreStaticSprites(reelIdx: number, toOffset: number): void {
     const L    = this.model.tapeLength;
@@ -246,20 +302,39 @@ function spriteAlpha(y: number): number {
 }
 
 /**
- * 3-phase spin progress: quick ease-in → linear steady → cubic ease-out.
- * Maps t ∈ [0, 1] → progress ∈ [0, 1]; monotone, continuous.
+ * 3-phase spin progress: quadratic ease-in → linear steady → cubic ease-out.
+ * Maps t ∈ [0, 1] → progress ∈ [0, 1]; strictly monotone.
  */
 function spinProgress(t: number): number {
-  const P1 = 0.20, P2 = 0.65;  // phase boundary times
-  const W1 = 0.12, W2 = 0.63;  // distance weights for phases 1 & 2
-  const W3 = 1 - W1 - W2;      // = 0.25 for decel phase
+  const P1 = 0.18, P2 = 0.60; // phase boundary times
+  const W1 = 0.10, W2 = 0.65; // distance weights for accel & steady phases
+  const W3 = 1 - W1 - W2;     // = 0.25 for decel phase
 
   if (t <= P1) {
-    return W1 * ((t / P1) ** 2);                               // ease-in
+    return W1 * ((t / P1) ** 2);                             // quadratic ease-in
   } else if (t <= P2) {
-    return W1 + W2 * ((t - P1) / (P2 - P1));                  // linear
+    return W1 + W2 * ((t - P1) / (P2 - P1));                // linear steady
   } else {
     const td = (t - P2) / (1 - P2);
-    return W1 + W2 + W3 * (1 - (1 - td) ** 3);               // ease-out
+    return W1 + W2 + W3 * (1 - (1 - td) ** 3);             // cubic ease-out
+  }
+}
+
+/**
+ * Bounce offset (px) over bounce phase t ∈ [0, 1]:
+ *   0 → +OVERSHOOT (downward overshoot) → -RETURN (upward bounce) → 0 (settle)
+ */
+function bounceCurve(t: number): number {
+  if (t <= 0.45) {
+    // Overshoot downward: 0 → +BOUNCE_OVERSHOOT
+    return BOUNCE_OVERSHOOT * (t / 0.45);
+  } else if (t <= 0.75) {
+    // Swing back through zero to -BOUNCE_RETURN
+    const u = (t - 0.45) / 0.30;
+    return BOUNCE_OVERSHOOT * (1 - u) - BOUNCE_RETURN * u;
+  } else {
+    // Settle: -BOUNCE_RETURN → 0
+    const u = (t - 0.75) / 0.25;
+    return -BOUNCE_RETURN * (1 - u);
   }
 }
