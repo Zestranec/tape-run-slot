@@ -20,6 +20,7 @@ import { BetPanel } from "./ui/BetPanel";
 import { ToastMessage } from "./ui/ToastMessage";
 import { LoadingScreen, loadAssets, logoUrl } from "./ui/LoadingScreen";
 import { RulesScreen, rulesAlreadySeen } from "./ui/RulesScreen";
+import { computeLayout } from "./ui/layouts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REEL VISUAL CONSTANTS
@@ -896,15 +897,29 @@ async function main() {
 
   // ── Layout ──────────────────────────────────────────────────────────────────
   function layout(): void {
-    const w = app.screen.width;
-    const h = app.screen.height;
+    // Read window dimensions directly — PixiJS queues its internal renderer
+    // resize via requestAnimationFrame, so app.screen.width/height may still
+    // hold old values when the window "resize" event fires.
+    const w = window.innerWidth;
+    const h = window.innerHeight;
 
-    gameRoot.x = Math.round((w - UI_W) / 2);
-    gameRoot.y = PAD_TOP;
+    const cfg = computeLayout(w, h);
 
-    // End overlay: centred horizontally, aligned with top of reel box
-    endOverlay.x = Math.round((w - 340) / 2);
-    endOverlay.y = PAD_TOP + REEL_SLOT_Y + CTRL_ABOVE; // absolute top of reel box
+    // Scale the entire game world — all internal positions stay untouched.
+    gameRoot.x = cfg.rootX;
+    gameRoot.y = cfg.rootY;
+    gameRoot.scale.set(cfg.scale);
+
+    // End overlay lives on app.stage (not inside gameRoot) so it needs its own
+    // screen-space position and scale to stay in sync with the scaled gameRoot.
+    const s  = cfg.scale;
+    const eoW = 340 * s;
+    const eoH = 180 * s;
+    endOverlay.scale.set(s);
+    endOverlay.x = Math.round((w - eoW) / 2);
+    // Vertically: same screen y as the top of the reel box inside gameRoot.
+    endOverlay.y = Math.round(cfg.rootY + (REEL_SLOT_Y + CTRL_ABOVE) * s);
+    void eoH; // referenced for documentation; PixiJS uses it via scale
 
     devDrawer.resize(w, h);
 
