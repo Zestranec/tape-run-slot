@@ -528,11 +528,14 @@ async function main() {
     // Lift the post-claim gate the moment a spin is committed.
     postClaimSpinRequired = false;
 
-    // Player is spinning with available (green) cards still on screen — skip them.
-    if (cards.hasAvailable()) {
-      cards.clearAvailable();  // clears available + both almost sets
-      refreshAllCards();       // clear green/yellow highlights immediately
-      toast.show("SKIPPED", { duration: 800 });
+    // Clear all highlights immediately when spin starts.
+    // clearAvailable() wipes available + both almost sets in one call.
+    const hadAvailable = cards.hasAvailable();
+    const hadAlmost    = cards.almostShownIds.size > 0;
+    if (hadAvailable || hadAlmost) {
+      cards.clearAvailable();
+      refreshAllCards();
+      if (hadAvailable) toast.show("SKIPPED", { duration: 800 });
     }
 
     spinController.requestSpin(() => {
