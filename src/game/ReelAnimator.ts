@@ -39,7 +39,13 @@ const BOTTOM_THRESHOLD = REEL_HEIGHT + SLOT_H; // 256 px — recycle below here
 // ── Minimum rotations per reel ────────────────────────────────────────────────
 // Each reel completes at least this many full rotations before stopping.
 // Combined with per-reel spinDurationMs, produces a realistic wave of stops.
-const BASE_ROTATIONS = [2, 2.25, 2.5, 2.75, 3];
+//
+// Values are kept low enough that peak pixel-per-frame movement stays below
+// SLOT_H (96 px) at 60 fps — preventing the wagon-wheel / backward-rotation
+// optical illusion.  At 60 fps (Δt≈16.67 ms) with L=30 and spinDuration=1800:
+//   peak px/frame = 1.383 × (ceil(rotBase×L)+L-1)×SLOT_H / spinDuration × 16.67
+//   rotBase=1 → max 72 px/frame  ✓   rotBase=2 → max 109 px/frame ✗
+const BASE_ROTATIONS = [1, 1.25, 1.5, 1.75, 2];
 
 // ── Stop bounce ───────────────────────────────────────────────────────────────
 // 4-keyframe mechanical drop: 0 → +8 (overshoot) → -3 (rebound) → +1 → 0 (settle)
@@ -332,25 +338,32 @@ function spriteAlpha(y: number): number {
 /**
  * 3-phase spin progress mapping t ∈ [0,1] → covered fraction ∈ [0,1].
  *
- *   Phase A (0 → P1):  easeOutCubic ramp-up   (covers W1 of distance)
+ *   Phase A (0 → P1):  easeInQuad ramp-up     (covers W1 of distance)
  *   Phase B (P1 → P2): linear steady           (covers W2 of distance)
  *   Phase C (P2 → 1):  easeOutQuart slow-down  (covers W3 of distance)
  *
- * Strictly monotone — movement is always forward.
+ * Strictly monotone — movement is ALWAYS forward (positive). The reel can
+ * never appear to reverse: velocity starts at 0, rises to peak, stays flat,
+ * then falls smoothly to 0.
+ *
+ * easeInQuad (t²) was deliberately chosen for the accel phase:
+ *   - starts from 0 velocity → no "false-reverse" optical illusion
+ *   - easeOutCubic (1−(1−u)³) must NOT be used here because it peaks at
+ *     t=0 and decelerates to 0, creating a near-stop mid-spin that looks
+ *     like a backward reversal.
  */
 function spinProgress(t: number): number {
-  const P1 = 0.12, P2 = 0.65;
-  const W1 = 0.08, W2 = 0.67;
+  const P1 = 0.18, P2 = 0.65;
+  const W1 = 0.10, W2 = 0.65;
   const W3 = 1 - W1 - W2; // 0.25
 
   if (t <= P1) {
-    // easeOutCubic: fast start, smooth peak
-    const u = t / P1;
-    return W1 * (1 - (1 - u) ** 3);
+    // easeInQuad: starts at rest, accelerates to peak — always forward
+    return W1 * (t / P1) ** 2;
   } else if (t <= P2) {
     return W1 + W2 * ((t - P1) / (P2 - P1));
   } else {
-    // easeOutQuart: aggressive slowdown, satisfying catch
+    // easeOutQuart: powerful deceleration, satisfying mechanical catch
     const td = (t - P2) / (1 - P2);
     return W1 + W2 + W3 * (1 - (1 - td) ** 4);
   }
@@ -361,17 +374,16 @@ function spinProgress(t: number): number {
  * Multiply by (totalPx / spinDurationMs) to get px/ms for blur scaling.
  */
 function spinProgressDerivative(t: number): number {
-  const P1 = 0.12, P2 = 0.65;
-  const W1 = 0.08, W2 = 0.67, W3 = 0.25;
+  const P1 = 0.18, P2 = 0.65;
+  const W1 = 0.10, W2 = 0.65, W3 = 0.25;
 
   if (t <= P1) {
-    const u = t / P1;
-    return W1 * 3 * (1 - u) ** 2 / P1;              // easeOutCubic derivative
+    return W1 * 2 * t / (P1 * P1);                   // easeInQuad derivative
   } else if (t <= P2) {
-    return W2 / (P2 - P1);                           // linear steady (peak)
+    return W2 / (P2 - P1);                            // linear steady (peak)
   } else {
     const td = (t - P2) / (1 - P2);
-    return W3 * 4 * (1 - td) ** 3 / (1 - P2);       // easeOutQuart derivative
+    return W3 * 4 * (1 - td) ** 3 / (1 - P2);        // easeOutQuart derivative
   }
 }
 
