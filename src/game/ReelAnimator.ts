@@ -1,4 +1,4 @@
-import { Container, Sprite, Texture, Ticker } from "pixi.js";
+import { BlurFilter, Container, Sprite, Texture, Ticker } from "pixi.js";
 import { TapeSlotModel } from "./TapeSlotModel";
 import { SpinResult } from "./SpinController";
 
@@ -36,9 +36,15 @@ const BOUNCE_DURATION_MS = 140; // total bounce duration after main spin ends
 const BOUNCE_OVERSHOOT   = 6;   // px downward overshoot
 const BOUNCE_RETURN      = 3;   // px upward bounce back
 
+// ── Motion blur ───────────────────────────────────────────────────────────────
+const BLUR_FACTOR = 2.0; // strengthY = speedPxMs * BLUR_FACTOR
+const MAX_BLUR    = 12;  // cap so symbols remain recognisable at high speed
+
 /** Minimal view interface — keeps ReelAnimator decoupled from main.ts internals. */
 export interface ReelViewRef {
   container:    Container;
+  /** Sub-container for symbol sprites. BlurFilter is applied here during spin. */
+  symbolsLayer: Container;
   aboveSprite:  Sprite;
   centerSprite: Sprite;
   belowSprite:  Sprite;
@@ -87,6 +93,7 @@ export class ReelAnimator {
       nextTapePos: number;
       bouncing:    boolean;
       bounceStart: number;   // timestamp when bounce phase began
+      blurFilter:  BlurFilter;
     }
 
     const states: Array<ReelState | null> = [];
@@ -152,9 +159,13 @@ export class ReelAnimator {
         sprite.width  = SYMBOL_W;
         sprite.height = SYMBOL_H;
         sprite.alpha  = spriteAlpha(y0);
-        view.container.addChild(sprite);
+        view.symbolsLayer.addChild(sprite);
         sprites.push({ sprite, symbolIdx: symIdx });
       }
+
+      // One blur filter per reel, reused every frame — never recreated.
+      const blurFilter = new BlurFilter({ strengthX: 0, strengthY: 0, quality: 2 });
+      view.symbolsLayer.filters = [blurFilter];
 
       states.push({
         sprites,
@@ -163,6 +174,7 @@ export class ReelAnimator {
         nextTapePos:  fromOffset + half + 1, // = from + 3
         bouncing:     false,
         bounceStart:  0,
+        blurFilter,
       });
     }
 
@@ -208,6 +220,10 @@ export class ReelAnimator {
         const movement = totalPx - state.prevTotalPx;
         state.prevTotalPx = totalPx;
 
+        // Update blur strength based on instantaneous speed (frame-rate independent).
+        const speedPxMs = spinProgressDerivative(t) * state.totalPx / SPIN_DURATION_MS;
+        state.blurFilter.strengthY = Math.min(speedPxMs * BLUR_FACTOR, MAX_BLUR);
+
         for (const entry of state.sprites) {
           entry.sprite.y += movement;
 
@@ -224,6 +240,8 @@ export class ReelAnimator {
 
         // ── Main spin complete → start bounce ──────────────────────────────────
         if (t >= 1) {
+          // Kill blur before bounce — static sprites must be sharp.
+          state.blurFilter.strengthY = 0;
           // Snap static sprites to guaranteed-correct final content.
           this.restoreStaticSprites(i, toOffsets[i]);
           // Move animation sprites off-screen so they don't overlap static ones.
@@ -239,13 +257,15 @@ export class ReelAnimator {
       if (reelDone.every(Boolean)) {
         this.ticker.remove(onTick);
 
-        // Destroy animation sprites.
+        // Destroy animation sprites and remove blur filter.
         for (let i = 0; i < reelCount; i++) {
           const st = states[i];
           if (!st) continue;
           const view = this.views[i];
+          view.symbolsLayer.filters = [];
+          st.blurFilter.destroy();
           for (const entry of st.sprites) {
-            view.container.removeChild(entry.sprite);
+            view.symbolsLayer.removeChild(entry.sprite);
             entry.sprite.destroy();
           }
         }
@@ -299,6 +319,24 @@ function spriteAlpha(y: number): number {
   if (dist >= SLOT_H * 2)  return 0;
   if (dist < SLOT_H)       return 1 - 0.6 * (dist / SLOT_H); // 1.0 → 0.4
   return 0.4 - 0.4 * ((dist - SLOT_H) / SLOT_H);             // 0.4 → 0.0
+}
+
+/**
+ * Derivative of spinProgress — instantaneous speed in progress-units per time-unit.
+ * Multiply by (totalPx / SPIN_DURATION_MS) to get px/ms.
+ */
+function spinProgressDerivative(t: number): number {
+  const P1 = 0.18, P2 = 0.60;
+  const W1 = 0.10, W2 = 0.65, W3 = 0.25;
+
+  if (t <= P1) {
+    return (W1 * 2 * t) / (P1 * P1);                       // quadratic accel
+  } else if (t <= P2) {
+    return W2 / (P2 - P1);                                  // linear steady (peak)
+  } else {
+    const td = (t - P2) / (1 - P2);
+    return W3 * 3 * (1 - td) * (1 - td) / (1 - P2);       // cubic decel
+  }
 }
 
 /**

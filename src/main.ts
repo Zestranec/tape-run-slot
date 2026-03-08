@@ -97,6 +97,7 @@ const NEAR_MISS_LBL_STYLE = new TextStyle({ fontFamily: "Arial, sans-serif", fon
 interface ReelView extends ReelViewRef {
   slot:           Container;
   container:      Container;
+  symbolsLayer:   Container;
   aboveSprite:    Sprite;
   centerSprite:   Sprite;
   belowSprite:    Sprite;
@@ -145,25 +146,29 @@ function createReelView(): ReelView {
   bg.eventMode = "none";
   container.addChild(bg);
 
+  // symbolsLayer: blur filter is applied here during spin; UI overlays stay outside.
+  const symbolsLayer = new Container();
+  container.addChild(symbolsLayer);
+
   const aboveSprite = new Sprite(Texture.WHITE);
   aboveSprite.anchor.set(0.5);
   aboveSprite.x = CX; aboveSprite.y = -16; // Y_CENTER - SLOT_H; top 1/3 peeks below mask top
   aboveSprite.width = SYMBOL_W; aboveSprite.height = SYMBOL_H;
   aboveSprite.alpha = 0.4;
-  container.addChild(aboveSprite);
+  symbolsLayer.addChild(aboveSprite);
 
   const centerSprite = new Sprite(Texture.WHITE);
   centerSprite.anchor.set(0.5);
   centerSprite.x = CX; centerSprite.y = REEL_HEIGHT / 2;
   centerSprite.width = SYMBOL_W; centerSprite.height = SYMBOL_H;
-  container.addChild(centerSprite);
+  symbolsLayer.addChild(centerSprite);
 
   const belowSprite = new Sprite(Texture.WHITE);
   belowSprite.anchor.set(0.5);
   belowSprite.x = CX; belowSprite.y = 176; // Y_CENTER + SLOT_H; bottom 1/3 peeks above mask bottom
   belowSprite.width = SYMBOL_W; belowSprite.height = SYMBOL_H;
   belowSprite.alpha = 0.4;
-  container.addChild(belowSprite);
+  symbolsLayer.addChild(belowSprite);
 
   // Permanent clip mask — top/bottom cards visible only in the 1/3 that falls within the window.
   const reelMask = new Graphics();
@@ -249,7 +254,7 @@ function createReelView(): ReelView {
   container.addChild(nearMissLabel);
 
   return {
-    slot, container,
+    slot, container, symbolsLayer,
     aboveSprite, centerSprite, belowSprite,
     lockOverlay,
     nudgeUp, nudgeDown,
